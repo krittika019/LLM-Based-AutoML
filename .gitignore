@@ -1,0 +1,51 @@
+# ── Secrets & environment ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Testing & linting ─────────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── ML / experiment tracking ──────────────────────────────────────────────────
+mlruns/
+mlartifacts/
+
+# ── Uploaded datasets (temp files) ────────────────────────────────────────────
+/tmp/
+*.csv.tmp
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── OS & editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/

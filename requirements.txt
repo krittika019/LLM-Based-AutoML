@@ -1,0 +1,19 @@
+python-dotenv>=1.0.0
+# FastAPI backend for React UI
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+category-encoders>=2.6.0
+langgraph>=0.2.0
+groq>=0.11.0
+# openai is required for alternative providers: Cerebras, Together AI, Ollama, OpenAI
+# Install with: pip install openai>=1.0.0
+# Then set LLM_PROVIDER=cerebras|together|ollama|openai plus the corresponding API key in .env
+openai>=1.0.0
+pymongo>=4.6.0
+matplotlib>=3.8.0
+openpyxl>=3.1.0
+reportlab>=4.0.0
