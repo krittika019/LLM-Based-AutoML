@@ -34,7 +34,7 @@ mlartifacts/
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/  # committed so Render (Python runtime) can serve it without Node
 frontend/.vite/
 
 # ── OS & editor ───────────────────────────────────────────────────────────────
