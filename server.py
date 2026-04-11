@@ -23,7 +23,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from automl_system.agents.intent_parser import parse_user_intent
@@ -67,6 +68,21 @@ _RUNS: dict[str, dict[str, Any]] = {}
 
 _UPLOAD_DIR = Path(tempfile.gettempdir()) / "automl_uploads"
 _UPLOAD_DIR.mkdir(exist_ok=True)
+
+# ── Serve built React frontend (production) ───────────────────────────────────
+_FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+    async def serve_spa(full_path: str = ""):
+        """Catch-all: serve index.html for all non-API routes (SPA routing)."""
+        # Don't intercept API routes
+        if full_path.startswith(("run", "stream", "upload", "download", "docs", "openapi")):
+            raise HTTPException(status_code=404)
+        index = _FRONTEND_DIST / "index.html"
+        return HTMLResponse(index.read_text(encoding="utf-8"))
 
 # ── Phase metadata (mirrors graph/orchestrator.py node names) ─────────────────
 _PHASE_NODE_META: dict[str, tuple[int, str]] = {
