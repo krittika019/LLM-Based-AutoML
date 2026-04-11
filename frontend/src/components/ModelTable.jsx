@@ -41,6 +41,10 @@ const REG_LABELS = {
 // Lower-is-better keys (render with inverted color)
 const LOWER_BETTER = new Set(['log_loss', 'brier_score', 'mae', 'mse', 'rmse', 'median_ae', 'mape_pct'])
 
+// Key metrics to always show (secondary importance — primary is always included)
+const CLS_IMPORTANT = ['accuracy', 'f1', 'roc_auc', 'precision', 'recall']
+const REG_IMPORTANT = ['r2', 'rmse', 'mae']
+
 function metricColor(key, val) {
   const n = parseFloat(val)
   if (isNaN(n)) return '#94a3b8'
@@ -50,12 +54,12 @@ function metricColor(key, val) {
   return n >= 0.9 ? '#10b981' : n >= 0.75 ? '#3b82f6' : n >= 0.6 ? '#f59e0b' : '#ef4444'
 }
 
-function MetricChip({ label, value }) {
+function MetricChip({ label, value, isPrimary }) {
   const n = parseFloat(value)
   const display = isNaN(n) ? '—' : n.toFixed(4)
   return (
-    <div className="metric-chip">
-      <span className="metric-chip-label">{label}</span>
+    <div className={`metric-chip${isPrimary ? ' metric-chip-primary' : ''}`}>
+      <span className="metric-chip-label">{label}{isPrimary && <span className="metric-chip-star"> ★</span>}</span>
       <span className="metric-chip-value" style={{ color: metricColor(label.toLowerCase().replace(/[^a-z0-9]/g, '_'), n) }}>
         {display}
       </span>
@@ -89,13 +93,29 @@ function ConfusionMatrix({ cm }) {
   )
 }
 
-function DetailedMetrics({ metrics, taskType }) {
+function DetailedMetrics({ metrics, taskType, primaryMetric }) {
   if (!metrics || !Object.keys(metrics).length) return null
   const labelMap = taskType === 'regression' ? REG_LABELS : CLS_LABELS
+  const important = taskType === 'regression' ? REG_IMPORTANT : CLS_IMPORTANT
   const cm = metrics.confusion_matrix
-  const chips = Object.entries(labelMap)
-    .filter(([k]) => metrics[k] != null)
-    .map(([k, label]) => <MetricChip key={k} label={label} value={metrics[k]} />)
+
+  // Normalise primary metric key (e.g. "roc-auc" → "roc_auc")
+  const normPrimary = (primaryMetric || '').toLowerCase().replace(/[^a-z0-9]/g, '_')
+
+  // Build ordered list: primary first, then important set, dedup
+  const orderedKeys = [
+    normPrimary,
+    ...important,
+  ].filter((k, idx, arr) => arr.indexOf(k) === idx && labelMap[k] && metrics[k] != null)
+
+  const chips = orderedKeys.map(k => (
+    <MetricChip
+      key={k}
+      label={labelMap[k]}
+      value={metrics[k]}
+      isPrimary={k === normPrimary}
+    />
+  ))
 
   return (
     <div className="metrics-detail">
@@ -178,7 +198,7 @@ export default function ModelTable({ data }) {
                   {hasDetail && isExpanded && (
                     <tr className="metrics-detail-row">
                       <td colSpan={6}>
-                        <DetailedMetrics metrics={row.detailed_metrics} taskType={taskType} />
+                        <DetailedMetrics metrics={row.detailed_metrics} taskType={taskType} primaryMetric={metric} />
                       </td>
                     </tr>
                   )}
