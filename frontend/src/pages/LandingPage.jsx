@@ -256,10 +256,12 @@ export default function LandingPage() {
                 {
                   title: 'Explainable AI',
                   desc: 'Every preprocessing step and model choice is documented in plain English so you always understand what happened and why.',
+                  img: new URL('../assets/images/explainable_AI.png', import.meta.url).href,
                 },
                 {
                   title: 'Production-Ready Code',
                   desc: 'Download a clean, self-contained Python script ready to deploy. No refactoring, no cleanup — just run it.',
+                  img: new URL('../assets/images/code_pipeline.png', import.meta.url).href,
                 },
                 {
                   title: 'Interactive EDA',
