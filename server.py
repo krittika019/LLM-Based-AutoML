@@ -74,16 +74,6 @@ _FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 if _FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
-    async def serve_spa(full_path: str = ""):
-        """Catch-all: serve index.html for all non-API routes (SPA routing)."""
-        # Don't intercept API routes
-        if full_path.startswith(("run", "stream", "upload", "download", "docs", "openapi")):
-            raise HTTPException(status_code=404)
-        index = _FRONTEND_DIST / "index.html"
-        return HTMLResponse(index.read_text(encoding="utf-8"))
-
 # ── Phase metadata (mirrors graph/orchestrator.py node names) ─────────────────
 _PHASE_NODE_META: dict[str, tuple[int, str]] = {
     "planning": (2, "Planning"),
@@ -764,6 +754,18 @@ async def download_report(run_id: str):
     return FileResponse(
         pp, filename="automl_stakeholder_report.pdf", media_type="application/pdf"
     )
+
+
+# ── SPA catch-all — MUST be last so all API routes match first ───────────────
+# Registered here (after all @app.get/@app.post routes) so FastAPI checks
+# specific routes before falling back to this wildcard.
+if _FRONTEND_DIST.exists():
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+    async def serve_spa(full_path: str = ""):
+        """Catch-all: serve index.html for all non-API routes (SPA routing)."""
+        index = _FRONTEND_DIST / "index.html"
+        return HTMLResponse(index.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
