@@ -1,0 +1,2 @@
+eliminated_family,eliminated_subsample_score,subsample_rank_of_eliminated,total_candidates,was_worst_subsample_scorer,elimination_correct,best_survivor_test_score,all_subsample_scores,dataset,lenient_correct
+XGBoost,0.1596,1,6,True,True,0.4872,"{'RandomForest': 0.2641, 'GradientBoosting': 0.1714, 'XGBoost': 0.1596, 'LightGBM': 0.1973, 'CatBoost': 0.2291, 'HistGradientBoosting': 0.196}",wine,True

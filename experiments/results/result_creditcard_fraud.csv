@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+creditcard_fraud,50000,29,classification,F1 (weighted),RandomForest (default),0.9993,0.9992,,,35.49,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),Linear baseline,0.9988,0.9993,,,1.63,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),AutoGluon,,0.9992,,,237.63,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),FLAML,,0.9995,,,608.02,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),AutoML (ours),,0.9993,,,1058.2,ok,11,XGBoost,0.0,22.0,8.0,73.3,True,False

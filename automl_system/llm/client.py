@@ -7,6 +7,7 @@ Supported providers (set LLM_PROVIDER env var):
   ollama     — Local models. Needs: pip install openai  +  Ollama running locally
   openai     — OpenAI API. Needs: pip install openai  +  OPENAI_API_KEY
   (any other) — Generic OpenAI-compat via OPENAI_COMPAT_BASE_URL + OPENAI_COMPAT_API_KEY
+
 """
 
 from __future__ import annotations
@@ -59,8 +60,10 @@ def _is_rate_limit_error(err: Exception) -> bool:
     )
 
 
-# Module-level throttle: minimum seconds between successive LLM API calls
-_MIN_CALL_INTERVAL_SEC: float = 0.4
+# Module-level throttle: minimum seconds between successive LLM API calls.
+# Groq free tier = ~30 RPM. 2.1 s/call ≈ 28 RPM — stays just under the limit
+# and avoids the 3–43 s retry waits that 429s cause.
+_MIN_CALL_INTERVAL_SEC: float = 2.1
 _last_call_ts: float = 0.0
 
 
@@ -68,13 +71,16 @@ _last_call_ts: float = 0.0
 
 def _build_provider_client(provider: str) -> Any | None:
     """Return an API client for `provider` (Groq or OpenAI-compatible)."""
+    import httpx, certifi
+    _http = httpx.Client(verify=certifi.where())
+
     prov = provider.lower()
     if prov == "groq":
         key = config.GROQ_API_KEY
         if not key:
             logger.warning("GROQ_API_KEY not set.")
             return None
-        return Groq(api_key=key)
+        return Groq(api_key=key, http_client=_http)
 
     # All other providers use the OpenAI package
     try:
@@ -107,7 +113,7 @@ def _build_provider_client(provider: str) -> Any | None:
     if not key:
         logger.warning("%s API key not set.", prov.upper())
         return None
-    return _OpenAI(api_key=key, base_url=base)
+    return _OpenAI(api_key=key, base_url=base, http_client=_http)
 
 
 def _resolve_model(logical_model: str, provider: str) -> str:
@@ -165,6 +171,7 @@ class LLMClient:
         system_prompt: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        json_mode: bool = False,
     ) -> str:
         if not self._client:
             return ""
@@ -184,7 +191,7 @@ class LLMClient:
 
         ck = self._cache_key(model_name, system_prompt, user_prompt)
         if ck in self._cache:
-            self.cache_hits += 1
+            LLMClient.cache_hits += 1
             self._cache.move_to_end(ck)
             return self._cache[ck]
 
@@ -201,7 +208,7 @@ class LLMClient:
                 if system_prompt:
                     messages.append({"role": "system", "content": system_prompt})
                 messages.append({"role": "user", "content": user_prompt})
-                self.call_count += 1
+                LLMClient.call_count += 1
                 _last_call_ts = time.time()
 
                 call_kwargs: dict[str, Any] = dict(
@@ -211,6 +218,10 @@ class LLMClient:
                 )
                 if max_tokens:
                     call_kwargs["max_tokens"] = max_tokens
+                # JSON mode: forces model to output raw valid JSON (no preamble, no fences).
+                # Supported by Groq, OpenAI, Cerebras. Silently skipped if provider rejects it.
+                if json_mode:
+                    call_kwargs["response_format"] = {"type": "json_object"}
 
                 resp = self._client.chat.completions.create(**call_kwargs)
                 choice = resp.choices[0].message
@@ -273,7 +284,9 @@ class LLMClient:
                     )
                     if max_tokens:
                         call_kwargs_f["max_tokens"] = max_tokens
-                    self.call_count += 1
+                    if json_mode:
+                        call_kwargs_f["response_format"] = {"type": "json_object"}
+                    LLMClient.call_count += 1
                     resp_f = fallback_client.chat.completions.create(**call_kwargs_f)
                     text_f = (resp_f.choices[0].message.content or "").strip()
                     self._cache[ck] = text_f

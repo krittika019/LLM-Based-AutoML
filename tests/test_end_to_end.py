@@ -29,7 +29,7 @@ def _mock_get_log(session_id: str) -> list[dict]:
     return list(_MEMORY.get(session_id, []))
 
 
-def _mock_llm_call(self, prompt: str, model: str | None = None, system_prompt: str | None = None) -> str:
+def _mock_llm_call(self, prompt: str, model: str | None = None, system_prompt: str | None = None, **kwargs) -> str:
     if "Return ONE JSON object with keys" in prompt:
         return json.dumps(
             {

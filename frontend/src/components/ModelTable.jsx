@@ -1,14 +1,31 @@
 import React, { useState } from 'react'
 
-function scoreCell(v) {
+function scoreCell(v, lowerIsBetter = false, allScores = null) {
   if (v == null || v === '' || v === 'N/A') return <span className="score-na">—</span>
   const num = parseFloat(v)
   if (isNaN(num)) return <span>{v}</span>
-  const color =
-    num >= 0.9  ? '#10b981' :
-    num >= 0.75 ? '#3b82f6' :
-    num >= 0.6  ? '#f59e0b' : '#ef4444'
-  return <span style={{ color, fontWeight: 600 }}>{num.toFixed(4)}</span>
+  let color
+  // For raw regression metrics (RMSE/MAE in data units), fixed 0-1 thresholds don't apply.
+  // Use relative rank among all non-null scores when allScores is provided and range > 2.
+  if (lowerIsBetter && allScores && allScores.length > 1) {
+    const valid = allScores.filter(s => s != null && !isNaN(s))
+    const range = Math.max(...valid) - Math.min(...valid)
+    if (range > 2) {
+      // Relative: best (min) = green, worst (max) = red
+      const mn = Math.min(...valid), mx = Math.max(...valid)
+      const rel = range > 0 ? (num - mn) / range : 0
+      color = rel <= 0.15 ? '#10b981' : rel <= 0.4 ? '#3b82f6' : rel <= 0.7 ? '#f59e0b' : '#ef4444'
+    } else {
+      color = num <= 0.1 ? '#10b981' : num <= 0.5 ? '#3b82f6' : num <= 1.5 ? '#f59e0b' : '#ef4444'
+    }
+  } else if (lowerIsBetter) {
+    color = num <= 0.1 ? '#10b981' : num <= 0.5 ? '#3b82f6' : num <= 1.5 ? '#f59e0b' : '#ef4444'
+  } else {
+    color = num >= 0.9 ? '#10b981' : num >= 0.75 ? '#3b82f6' : num >= 0.6 ? '#f59e0b' : '#ef4444'
+  }
+  // Format: use exponential notation for very large numbers
+  const display = Math.abs(num) >= 1e6 ? num.toExponential(3) : num.toFixed(4)
+  return <span style={{ color, fontWeight: 600 }}>{display}</span>
 }
 
 function StatusBadge({ status }) {
@@ -125,6 +142,44 @@ function DetailedMetrics({ metrics, taskType, primaryMetric }) {
   )
 }
 
+function StabilityBadge({ foldVariance }) {
+  if (foldVariance == null || isNaN(parseFloat(foldVariance))) return null
+  const v = parseFloat(foldVariance)
+  let label, color, title
+  if (v <= 0.005) { label = 'stable'; color = '#10b981'; title = `CV fold variance: ${v.toFixed(4)} — model is stable across folds` }
+  else if (v <= 0.02) { label = 'moderate'; color = '#f59e0b'; title = `CV fold variance: ${v.toFixed(4)} — some variance across folds` }
+  else { label = 'unstable'; color = '#ef4444'; title = `CV fold variance: ${v.toFixed(4)} — high variance, possible overfitting` }
+  return (
+    <span title={title} style={{
+      marginLeft: 6, padding: '1px 6px', borderRadius: 4, fontSize: 11,
+      background: color + '22', color, border: `1px solid ${color}55`, fontWeight: 600,
+    }}>
+      {label}
+    </span>
+  )
+}
+
+function EliminationAudit({ audit }) {
+  if (!audit || !audit.eliminated_family) return null
+  const correct = audit.elimination_correct
+  const rank = audit.subsample_rank_of_eliminated
+  const total = audit.total_candidates
+  const icon = correct ? '✅' : '⚠️'
+  const label = correct ? 'Correct elimination' : 'Questionable elimination'
+  return (
+    <div className="elim-audit">
+      <span className="elim-audit-icon">{icon}</span>
+      <span className="elim-audit-text">
+        <strong>Progressive screening:</strong> <code>{audit.eliminated_family}</code> eliminated after Round 1
+        (subsample rank {rank}/{total}) — <em>{label}</em>.
+        {typeof audit.eliminated_subsample_score === 'number' && (
+          <> Subsample score: <code>{audit.eliminated_subsample_score.toFixed(4)}</code>.</>
+        )}
+      </span>
+    </div>
+  )
+}
+
 export default function ModelTable({ data }) {
   const [expanded, setExpanded] = useState({})
   if (!data?.comparison_table?.length) return null
@@ -133,17 +188,27 @@ export default function ModelTable({ data }) {
   const interpretation = data.interpretation || ''
   const taskType = data.task_type || ''
   const metric = data.metric || ''
+  const metricDisplay = data.metric_display || metric
+  const lowerIsBetter = data.metric_is_lower_better === true
+  const eliminationAudit = data.elimination_audit || null
 
   const toggleRow = (i) => setExpanded(prev => ({ ...prev, [i]: !prev[i] }))
 
+  // Collect all test display scores for relative coloring of regression metrics
+  const allTestScores = rows.map(r => {
+    const v = r.test_display_score ?? r.test_score
+    return v != null ? parseFloat(v) : null
+  }).filter(v => v != null && !isNaN(v))
+
   return (
     <div className="model-table-wrap">
-      {metric && (
+      {metricDisplay && (
         <div className="model-table-meta">
-          Primary metric: <strong>{metric}</strong>
+          Primary metric: <strong>{metricDisplay}</strong>
           {taskType && <> · Task: <strong>{taskType}</strong></>}
         </div>
       )}
+      <EliminationAudit audit={eliminationAudit} />
       <div className="model-table-scroll">
         <table className="model-table">
           <thead>
@@ -173,10 +238,11 @@ export default function ModelTable({ data }) {
                         </span>
                         {isBest && <span className="best-badge-pill">Best</span>}
                         <FrameworkBadge source={row.source} />
+                        <StabilityBadge foldVariance={row.fold_variance} />
                       </div>
                     </td>
-                    <td>{scoreCell(row.cv_score)}</td>
-                    <td>{scoreCell(row.test_score)}</td>
+                    <td>{scoreCell(row.cv_display_score ?? row.cv_score, lowerIsBetter)}</td>
+                    <td>{scoreCell(row.test_display_score ?? row.test_score, lowerIsBetter, allTestScores)}</td>
                     <td>
                       {typeof row.training_time === 'number'
                         ? row.training_time.toFixed(1)
@@ -209,6 +275,13 @@ export default function ModelTable({ data }) {
         </table>
       </div>
 
+      {data.leakage_warning_models?.length > 0 && (
+        <div className="leakage-warning-banner">
+          ⚠️ <strong>Potential data leakage:</strong> {data.leakage_warning_models.join(', ')} scored ≥{' '}
+          {(data.near_perfect_sentinel ?? 0.999).toFixed(3)} — excluded from best-model selection.
+          Check for features that encode the target.
+        </div>
+      )}
       {interpretation && (
         <div className="model-interpretation">
           <span className="model-interpretation-label">LLM Interpretation:</span>

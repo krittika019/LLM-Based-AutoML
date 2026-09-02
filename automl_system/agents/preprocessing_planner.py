@@ -8,12 +8,9 @@ from typing import Any
 from automl_system import config
 from automl_system.llm.client import LLMClient
 from automl_system.memory import episodic
-from automl_system.memory import semantic as semantic_memory
 from automl_system.state.session import SessionState
-from automl_system.utils.dataset_profile import build_semantic_profile_vector
 from automl_system.utils.llm_json import extract_json_object
 from automl_system.utils.profile_conditioner import condition_profile_for_preprocessing
-from automl_system.utils.token_tracker import track_profile_usage
 
 logger = logging.getLogger(__name__)
 
@@ -66,20 +63,8 @@ def make_preprocessing_plan(session: SessionState) -> dict[str, Any]:
     task = session.task_config or {}
     findings = _deterministic_findings(profile)
     
-    # Track profile compression for this agent
-    compression_metrics = track_profile_usage("preprocessing_planner", profile)
-    if compression_metrics:
-        logger.info(f"preprocessing_planner: {compression_metrics['compression_ratio_percent']}% profile compression")
-    
     n_rows = findings["n_rows"]
     n_feat = findings["n_features"]
-
-    soft_past: list[dict] = []
-    try:
-        pv = build_semantic_profile_vector(profile if profile else {"n_rows": n_rows, "n_columns": n_feat, "columns": {}})
-        soft_past = semantic_memory.retrieve_similar(pv, top_k=3)
-    except Exception as e:
-        logger.debug("semantic retrieve_similar skipped: %s", e)
 
     client = LLMClient()
     prompt = f"""You are planning a tabular ML preprocessing pipeline (Mode 1 — single call, advisory plan).
@@ -95,9 +80,6 @@ DATASET_PROFILE_SUMMARY:
 - skewed numeric (|skew|>1): {findings['skewed_numeric'][:40]}
 - potential ID / leakage (cardinality == row count): {findings['identifier_like_columns']}
 
-SOFT_RECOMMENDATIONS_FROM_PAST_RUNS (cosine similarity on profile; advisory only):
-{soft_past if soft_past else 'No past runs in memory — reason purely from the current profile.'}
-
 Return ONE JSON object — keys are ALL required:
 - null_strategy_notes: dict mapping each column with nulls to a short imputation note (e.g. {{"Age": "median imputation — numeric with 5% missing", "Cabin": "drop — >77% missing"}})
 - encoding_candidates: array of {{"column": "...", "method": "one_hot|ordinal|target|binary"}} for columns that need encoding
@@ -110,7 +92,7 @@ Return ONE JSON object — keys are ALL required:
 
 JSON only, no markdown outside the object."""
 
-    raw = client.call(prompt, max_tokens=config.LLM_MAX_TOKENS_JSON)
+    raw = client.call(prompt, max_tokens=config.LLM_MAX_TOKENS_JSON, json_mode=True)
     parsed = extract_json_object(raw) if raw else None
     plan: dict[str, Any] = dict(_DEFAULT_PLAN)
     user_summary = ""
@@ -134,7 +116,7 @@ JSON only, no markdown outside the object."""
             f"The plan targets {n_rows} rows and {n_feat} columns. "
             f"High-null columns will use robust imputation; "
             f"{'encoding and scaling are recommended' if plan.get('scaling_needed') else 'encoding is prioritized'}. "
-            f"{'Feature engineering may help given dataset size.' if plan.get('feature_engineering_likely') else 'Feature engineering is deferred given size or simplicity.'}"
+            f"{'Feature engineering may help given dataset size.' if plan.get('feature_engineering_recommended') else 'Feature engineering is deferred given size or simplicity.'}"
         )
 
     if not raw or not parsed:

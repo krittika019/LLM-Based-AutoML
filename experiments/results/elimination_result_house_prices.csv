@@ -1,0 +1,2 @@
+eliminated_family,eliminated_subsample_score,subsample_rank_of_eliminated,total_candidates,was_worst_subsample_scorer,elimination_correct,best_survivor_test_score,all_subsample_scores,dataset,lenient_correct
+RandomForest,0.8597,1,6,True,True,0.8865,"{'LightGBM': 0.8805, 'XGBoost': 0.8649, 'RandomForest': 0.8597, 'GradientBoosting': 0.8652, 'HistGradientBoosting': 0.88, 'CatBoost': 0.8899}",house_prices,True

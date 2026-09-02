@@ -12,12 +12,18 @@ import asyncio
 import json
 import logging
 import queue as _queue
+import sys
 import tempfile
 import threading
 import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Optional
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 import numpy as np
 import pandas as pd
@@ -29,19 +35,15 @@ from pydantic import BaseModel
 
 from automl_system.agents.intent_parser import parse_user_intent
 from automl_system.agents.task_classifier import (
-    apply_target_confirmation_reply,
     resolve_target_from_data,
     run_task_classification,
 )
 from automl_system.graph.orchestrator import build_graph
 from automl_system.llm.client import LLMClient
-from automl_system.memory import episodic, semantic
+from automl_system.memory import episodic
 from automl_system.memory.episodic import create_session, initialize_session_document
 from automl_system.state.session import SessionState
-from automl_system.utils.dataset_profile import (
-    build_semantic_profile_vector,
-    compute_dataset_profile,
-)
+from automl_system.utils.dataset_profile import compute_dataset_profile
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -227,193 +229,79 @@ def _pipeline_worker(
         # ── Phase 1 — Initialization ──────────────────────────────────────────
         emit({"type": "phase_start", "phase": 1, "phase_name": "Initialization"})
 
-        # Target confirmation follow-up (user replied to a previous question)
-        if session.pending_target_confirmation:
-            ok, conf_msg = apply_target_confirmation_reply(user_line, session, df)
-            emit({"type": "message", "phase": 1, "text": conf_msg})
-            # Handle single-value target error from confirmation path
-            if session.task_config.get("_pipeline_stop") == "single_value_target":
-                session.terminated = True
-                session.phase_status_map["phase1"] = "failed"
-                emit({"type": "phase_done", "phase": 1, "status": "failed"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
-            if not ok or not session.task_config.get("target_column"):
-                session.phase_status_map["phase1"] = "waiting"
-                emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
-            session.phase1_complete = True
+        # Step 1: Parse intent — classify state + extract target
+        intent = parse_user_intent(user_line, list(df.columns), session)
+        session.intent_result = intent
+        state = str(intent.get("state") or "in_scope")
 
-        # Intent parsing
-        if not session.phase1_complete:
-            # On follow-up to a clarification, combine original instruction + new reply
-            if session.awaiting_clarification and session.original_instruction:
-                combined = f"{session.original_instruction}\n\nUser clarification: {user_line}"
-            else:
-                combined = user_line
-                if not session.original_instruction:
-                    session.original_instruction = user_line
+        if intent.get("llm_unavailable"):
+            emit({"type": "message", "phase": 1,
+                  "text": "The AI service is temporarily unavailable. Please try again in a moment."})
+            session.phase_status_map["phase1"] = "failed"
+            emit({"type": "phase_done", "phase": 1, "status": "failed"})
+            emit({"type": "final", "script_available": False,
+                  "report_available": False, "session": session.to_dict()})
+            return
 
-            intent = parse_user_intent(combined, list(df.columns), session)
-            session.intent_result = intent
-            state = str(intent.get("state") or "in_scope")
+        # Non-in_scope states: show message and stop (no retry loop for research use)
+        if state in ("out_of_scope", "unrecognizable", "ambiguous"):
+            msg = str(intent.get("message") or
+                      "This system supports supervised ML (classification/regression) on tabular data.")
+            emit({"type": "message", "phase": 1, "text": msg})
+            session.phase_status_map["phase1"] = "failed"
+            emit({"type": "phase_done", "phase": 1, "status": "failed"})
+            emit({"type": "final", "script_available": False,
+                  "report_available": False, "session": session.to_dict()})
+            return
 
-            # LLM service unavailable
-            if intent.get("llm_unavailable"):
-                emit({"type": "message", "phase": 1,
-                      "text": "The AI service is temporarily unavailable. Please try again in a moment."})
-                session.phase_status_map["phase1"] = "waiting"
-                emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
+        # Step 2: Resolve target column — intent may have extracted it already
+        if not session.task_config.get("target_column") or \
+                str(session.task_config["target_column"]) not in df.columns:
+            _resolved, msg, _conf, _extra = resolve_target_from_data(session, df)
+            if msg:
+                emit({"type": "message", "phase": 1, "text": str(msg)})
 
-            if state == "out_of_scope":
-                msg = str(intent.get("message") or "")
-                if not msg:
-                    msg = (
-                        "This system builds supervised ML models (classification or regression) "
-                        "from tabular data. Your request appears to be out of scope. "
-                        "If you have a prediction goal in mind — e.g. predicting a column value "
-                        "from other columns — please rephrase and I can help with that."
-                    )
-                emit({"type": "message", "phase": 1, "text": msg})
-                session.terminated = True
-                session.phase_status_map["phase1"] = "failed"
-                emit({"type": "phase_done", "phase": 1, "status": "failed"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
+        if not session.task_config.get("target_column") or \
+                str(session.task_config["target_column"]) not in df.columns:
+            emit({"type": "message", "phase": 1,
+                  "text": "Could not identify a target column. Please include the target column name in your prompt."})
+            session.phase_status_map["phase1"] = "failed"
+            emit({"type": "phase_done", "phase": 1, "status": "failed"})
+            emit({"type": "final", "script_available": False,
+                  "report_available": False, "session": session.to_dict()})
+            return
 
-            if state == "unrecognizable":
-                # Allow 1 clarification for unrecognizable, then treat as out_of_scope
-                if session.clarification_count >= 1:
-                    emit({"type": "message", "phase": 1,
-                          "text": ("I still couldn't understand your request. "
-                                   "This system supports classification and regression on tabular data only.")})
-                    session.terminated = True
-                    session.phase_status_map["phase1"] = "failed"
-                    emit({"type": "phase_done", "phase": 1, "status": "failed"})
-                    emit({"type": "final", "script_available": False,
-                          "report_available": False, "session": session.to_dict()})
-                    return
-                q_text = str(intent.get("clarifying_question") or "What would you like to predict?")
-                session.clarification_count += 1
-                session.awaiting_clarification = True
-                emit({"type": "message", "phase": 1, "text": q_text})
-                session.phase_status_map["phase1"] = "waiting"
-                emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
+        # Step 3: Validate target + select metric
+        _res, msg, _conf, _extra = run_task_classification(session, df)
+        if session.task_config.get("_pipeline_stop") == "single_value_target":
+            emit({"type": "message", "phase": 1, "text": msg})
+            session.terminated = True
+            session.phase_status_map["phase1"] = "failed"
+            emit({"type": "phase_done", "phase": 1, "status": "failed"})
+            emit({"type": "final", "script_available": False,
+                  "report_available": False, "session": session.to_dict()})
+            return
+        if msg:
+            emit({"type": "message", "phase": 1, "text": msg})
 
-            if state == "ambiguous":
-                # Allow max 2 clarifications for ambiguous; after that treat as out_of_scope
-                if session.clarification_count >= 2:
-                    emit({"type": "message", "phase": 1,
-                          "text": ("After two clarifications I still can't determine the goal. "
-                                   "Please rephrase your request as a clear classification or regression task.")})
-                    session.terminated = True
-                    session.phase_status_map["phase1"] = "failed"
-                    emit({"type": "phase_done", "phase": 1, "status": "failed"})
-                    emit({"type": "final", "script_available": False,
-                          "report_available": False, "session": session.to_dict()})
-                    return
-                q_text = str(intent.get("clarifying_question") or "Could you clarify what you'd like to predict?")
-                session.clarification_count += 1
-                session.awaiting_clarification = True
-                emit({"type": "message", "phase": 1, "text": q_text})
-                session.phase_status_map["phase1"] = "waiting"
-                emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
-
-            # Reached here → state is "in_scope"; clarification resolved
-            session.awaiting_clarification = False
-
-            # Resolve target column
-            tc = session.task_config.get("target_column")
-            if not tc or str(tc) not in df.columns:
-                target_status = intent.get("target_status")
-                if target_status == "deferred":
-                    # Deferred: continue to Step 2 without waiting for user input
-                    emit({"type": "message", "phase": 1,
-                          "text": "I'll identify the target column after examining your data."})
-                else:
-                    _resolved, msg, _conf, _extra = resolve_target_from_data(session, df)
-                    if msg:
-                        emit({"type": "message", "phase": 1, "text": str(msg)})
-                    if session.pending_target_confirmation:
-                        session.phase_status_map["phase1"] = "waiting"
-                        emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                        emit({"type": "final", "script_available": False,
-                              "report_available": False, "session": session.to_dict()})
-                        return
-
-            if (not session.task_config.get("target_column") or
-                    str(session.task_config["target_column"]) not in df.columns):
-                # Try data-driven resolution before asking the user
-                _resolved, msg, _conf, _extra = resolve_target_from_data(session, df)
-                if msg:
-                    emit({"type": "message", "phase": 1, "text": str(msg)})
-                if session.pending_target_confirmation:
-                    session.phase_status_map["phase1"] = "waiting"
-                    emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                    emit({"type": "final", "script_available": False,
-                          "report_available": False, "session": session.to_dict()})
-                    return
-                if (not session.task_config.get("target_column") or
-                        str(session.task_config["target_column"]) not in df.columns):
-                    emit({"type": "message", "phase": 1,
-                          "text": "Could not infer a **target column**. Reply with the exact column name to predict."})
-                    session.phase_status_map["phase1"] = "waiting"
-                    emit({"type": "phase_done", "phase": 1, "status": "waiting"})
-                    emit({"type": "final", "script_available": False,
-                          "report_available": False, "session": session.to_dict()})
-                    return
-
-            session.phase1_complete = True
-            # Step 5 (confirmed-target path): validate + metric selection
-            _res5, msg5, _conf5, _extra5 = run_task_classification(session, df)
-            if session.task_config.get("_pipeline_stop") == "single_value_target":
-                emit({"type": "message", "phase": 1, "text": msg5})
-                session.terminated = True
-                session.phase_status_map["phase1"] = "failed"
-                emit({"type": "phase_done", "phase": 1, "status": "failed"})
-                emit({"type": "final", "script_available": False,
-                      "report_available": False, "session": session.to_dict()})
-                return
-            if msg5:
-                emit({"type": "message", "phase": 1, "text": msg5})
-
+        # Step 4: Full profile with target + initialize memory document
+        resolved_target = session.task_config.get("target_column")
+        session.dataset_profile = compute_dataset_profile(df, target_column=resolved_target)
         session.task_config["goal"] = user_line
-        # ── Step 3: Initialize session memory document (now task_config is frozen for Phase 1) ──
         initialize_session_document(
             session_id=session.decisions_log_id or "",
             task_config=session.task_config,
             dataset_state_pointer=file_path,
         )
 
-        # ── Step 4: Full dataset profiling snapshot (with target column now resolved) ──────────
-        resolved_target = session.task_config.get("target_column")
-        session.dataset_profile = compute_dataset_profile(df, target_column=resolved_target)
-
-        # ── Step 5 (deferred-target path): re-run metric selection with full profile ──────────
-        # If metric was set during deferred target resolution, refresh it now that target_distribution is available
-        if resolved_target and resolved_target in df.columns and session.task_config.get("evaluation_metric"):
-            from automl_system.agents.task_classifier import _select_metric_from_profile
-            task_type_final = str(session.task_config.get("task_type") or "classification")
-            metric_hint_final = str(session.task_config.get("metric_hint") or "").strip() or None
-            metric_f, rationale_f = _select_metric_from_profile(
-                task_type_final, resolved_target, session.dataset_profile, metric_hint_final, df=df
-            )
-            session.task_config["evaluation_metric"] = metric_f
-            session.task_config["metric_rationale"] = rationale_f
         session.phase_status_map["phase1"] = "done"
+        task_type = str(session.task_config.get("task_type") or "")
+        metric = str(session.task_config.get("evaluation_metric") or "")
+        emit({"type": "message", "phase": 1,
+              "text": (
+                  f"Task: **{task_type}** | metric: **{metric}**. "
+                  f"{session.task_config.get('metric_rationale', '')}"
+              )})
         emit({"type": "message", "phase": 1,
               "text": f"Loaded **{len(df):,}** rows × **{df.shape[1]}** columns from `{filename}`."})
         emit({"type": "phase_done", "phase": 1, "status": "done"})
@@ -511,7 +399,10 @@ def _pipeline_worker(
                               "interpretation": exec_res.get("interpretation") or "",
                               "task_type": exec_res.get("task_type") or "",
                               "metric": exec_res.get("metric") or "",
+                              "metric_display": exec_res.get("metric_display") or "",
+                              "metric_is_lower_better": exec_res.get("metric_is_lower_better") or False,
                               "best_model_metrics": exec_res.get("best_model_metrics") or {},
+                              "elimination_audit": exec_res.get("elimination_audit") or {},
                           }})
 
         # Close the last open phase
@@ -522,44 +413,6 @@ def _pipeline_worker(
         # ── Persist semantic memory (reference: updated only on fully completed successful run) ───
         exec_results = session.execution_results or {}
         best_model = exec_results.get("best_model_name") or session.task_config.get("best_model")
-        run_succeeded = exec_results.get("status") not in {"no_models_succeeded", "missing_target", "failed"}
-        if run_succeeded:
-            try:
-                vec = build_semantic_profile_vector(session.dataset_profile or {})
-                # Build compact preprocessing strategy summary for Mode 1 retrieval
-                plan = session.preprocessing_plan or {}
-                preproc_summary = {
-                    "null_strategy": plan.get("null_strategy"),
-                    "encoding_strategy": plan.get("encoding_strategy"),
-                    "scaling_needed": plan.get("scaling_needed"),
-                    "feature_engineering_attempted": plan.get("feature_engineering_likely"),
-                }
-                # Build failure history for failure_diagnosis retrieval
-                failure_log = [
-                    {
-                        "failure_type": d.get("failure_type"),
-                        "responsible_phase": d.get("responsible_phase"),
-                        "proposed_fix": str(d.get("proposed_fix") or "")[:200],
-                    }
-                    for d in [session.last_failure_diagnosis or {}]
-                    if d.get("failure_type")
-                ]
-                semantic.store_run(
-                    vec,
-                    {
-                        "best_model_name": best_model,
-                        "best_test_score": exec_results.get("best_test_score"),
-                        "iterations": int(session.iteration_count or 0),
-                        "threshold": (session.execution_plan or {}).get("threshold"),
-                        "metric": (session.execution_plan or {}).get("metric"),
-                        "status": exec_results.get("status") or "completed",
-                        "preprocessing_strategy": preproc_summary,
-                        "failure_history": failure_log,
-                        "task_type": (session.task_config or {}).get("task_type"),
-                    },
-                )
-            except Exception as sem_err:
-                logger.warning("Semantic memory store skipped: %s", sem_err)
 
         # ── Save pipeline script ───────────────────────────────────────────────
         script_text = session.final_pipeline_script or ""
@@ -571,11 +424,14 @@ def _pipeline_worker(
             reg["script_path"] = script_path
 
         # ── Stakeholder PDF ────────────────────────────────────────────────────
-        pdf_path = str(session.stakeholder_pdf_path or "") or None
-        if pdf_path and Path(pdf_path).is_file():
-            reg["pdf_path"] = pdf_path
+        pdf_path: str | None = None
 
         reg["session"] = session.to_dict()
+
+        # ── Token cost table ───────────────────────────────────────────────────
+        token_cost = dict(session.token_cost_table or {})
+        if token_cost:
+            emit({"type": "token_cost", "data": token_cost})
 
         emit({
             "type": "final",

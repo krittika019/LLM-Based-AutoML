@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+diamonds,53794,9,regression,R²,RandomForest (default),0.981,0.9823,520.5712,263.0254,49.35,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,Linear baseline,0.9197,0.9209,1098.8105,724.2024,25.1,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,AutoGluon,,0.9846,485.4495,251.7109,121.38,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,FLAML,,0.9831,508.1969,259.5532,94.34,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,AutoML (ours),,0.9824,518.675704,267.654738,472.4,ok,13,Bag(LightGBM×4),3.0,1.0,3.0,57.1,False,False

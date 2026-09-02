@@ -8,9 +8,8 @@ from typing import Any
 from automl_system import config
 from automl_system.llm.client import LLMClient
 from automl_system.memory import episodic
-from automl_system.memory import semantic as semantic_memory
 from automl_system.state.session import SessionState
-from automl_system.utils.dataset_profile import build_semantic_profile_vector
+from automl_system.utils.decision_log import compact_decisions
 from automl_system.utils.llm_json import extract_json_object
 
 logger = logging.getLogger(__name__)
@@ -46,15 +45,15 @@ def _compact_table(rows: list[dict[str, Any]], limit: int = 8) -> list[dict[str,
     return out
 
 
-def _compact_decisions(entries: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
-    return [
-        {
-            "phase": e.get("phase"),
-            "action": e.get("action"),
-            "note": str(e.get("text") or e.get("summary") or e.get("message") or "")[:220],
-        }
-        for e in entries[-limit:]
+
+def _failed_model_statuses(results: dict[str, Any]) -> str:
+    table = list(results.get("comparison_table") or [])
+    failed = [
+        f"{r.get('model_name')}: {r.get('status')}"
+        for r in table
+        if r.get("status") not in ("ok", None) and r.get("test_score") is None
     ]
+    return "; ".join(failed) if failed else ""
 
 
 def _fallback_diagnosis(session: SessionState, results: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +75,7 @@ def _fallback_diagnosis(session: SessionState, results: dict[str, Any]) -> dict[
         }
 
     high_var = any(
-        isinstance(r.get("fold_variance"), (int, float)) and float(r.get("fold_variance") or 0) > 0.02
+        isinstance(r.get("fold_variance"), (int, float)) and float(r.get("fold_variance") or 0) > 0.03
         for r in table
     )
     large_gap = any(
@@ -144,38 +143,28 @@ def diagnose_failure(session: SessionState, results: dict[str, Any]) -> dict[str
     decisions = episodic.get_log(session.decisions_log_id) if session.decisions_log_id else []
     fallback = _fallback_diagnosis(session, results)
 
-    # Semantic memory: retrieve similar failures and their fixes (reference Phase 6 Step 2)
-    soft_past: list[dict] = []
-    try:
-        profile = session.dataset_profile or {}
-        pv = build_semantic_profile_vector(profile)
-        soft_past = semantic_memory.retrieve_similar(pv, top_k=3)
-    except Exception as _sem_err:
-        logger.debug("semantic retrieve_similar skipped in failure_diagnosis: %s", _sem_err)
-
     prompt = f"""You are a senior ML engineer diagnosing why an AutoML pipeline failed to meet its threshold.
 
 Inputs available to you:
 - COMPARISON_TABLE: {_compact_table(list(results.get('comparison_table') or []), limit=8)}
 - EXECUTION_INTERPRETATION: {(results.get('interpretation') or session.execution_interpretation or '')[:1200]}
-- DECISIONS_LOG_RECENT: {_compact_decisions(decisions, limit=12)}
+- DECISIONS_LOG_RECENT: {compact_decisions(decisions, limit=12)}
 - EDA_NARRATIVE: {(session.eda_narrative or '')[:800]}
-- ERROR_MESSAGES: {results.get('errors') or results.get('status') or ''}
-- PAST_RUN_SIMILARITIES (advisory — fixes that worked on similar datasets): {soft_past}
+- ERROR_MESSAGES: {_failed_model_statuses(results) or results.get('status') or ''}
 
 Classify the failure into EXACTLY one of these four types based on the signals described:
 
 1. data_quality_issue
    Signals: all models performing near or at a random baseline; high variance across CV folds
-   (fold_variance > 0.03); performance far below what similar datasets typically achieve;
-   large CV-to-test gap suggesting noise in features.
+   (fold_variance > 0.03); performance far below what similar datasets typically achieve.
    Responsible phase: basic_cleaning OR deep_cleaning
 
 2. feature_issue
    Signals: all models converging to the same mediocre score regardless of complexity;
    no feature shows meaningful correlation with target in EDA narrative;
    after feature engineering was applied performance did not improve;
-   high cook's distance / constant features still present.
+   high cook's distance / constant features still present;
+   large CV-to-test gap suggesting unstable or leaky derived features.
    Responsible phase: feature_selection OR feature_engineering
 
 3. model_issue
@@ -204,7 +193,7 @@ Return ONLY valid JSON:
   "should_exit": false
 }}"""
 
-    raw = LLMClient().call(prompt, max_tokens=config.LLM_MAX_TOKENS_JSON)
+    raw = LLMClient().call(prompt, model=config.LLM_PRO, max_tokens=config.LLM_MAX_TOKENS_JSON)
     parsed = extract_json_object(raw) if raw else None
     diagnosis = _sanitize_diagnosis(parsed, fallback)
 

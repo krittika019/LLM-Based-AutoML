@@ -11,17 +11,26 @@ import pandas as pd
 from automl_system import config
 from automl_system.llm.client import LLMClient
 from automl_system.memory import episodic
-from automl_system.pipeline.eda_visuals import build_eda_chat_messages
 from automl_system.state.session import SessionState
 from automl_system.utils.decision_log import log_decision
 from automl_system.utils.llm_json import extract_json_object
 
 logger = logging.getLogger(__name__)
 
+_EDA_SAMPLE_ROWS = 50_000   # rows above this → sample for expensive computations
+_EDA_MAX_CORR_COLS = 80     # max numeric columns included in correlation matrix
+
 
 def _log(session: SessionState, entry: dict[str, Any]) -> None:
     if session.decisions_log_id:
         episodic.append_decision(session.decisions_log_id, {"phase": "eda", **entry})
+
+
+def _sample_for_eda(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Return (df_for_eda, was_sampled). Samples to _EDA_SAMPLE_ROWS when needed."""
+    if len(df) > _EDA_SAMPLE_ROWS:
+        return df.sample(n=_EDA_SAMPLE_ROWS, random_state=42), True
+    return df, False
 
 
 def _numeric_cols(df: pd.DataFrame) -> list[str]:
@@ -55,6 +64,9 @@ def _full_correlation_matrix(df: pd.DataFrame) -> dict[str, dict[str, float]]:
     num = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
     if len(num) < 2:
         return {}
+    # Cap to _EDA_MAX_CORR_COLS to avoid O(p²) cost on wide datasets
+    if len(num) > _EDA_MAX_CORR_COLS:
+        num = num[:_EDA_MAX_CORR_COLS]
     sub = df[num].dropna()
     if len(sub) < 2:
         return {}
@@ -140,18 +152,30 @@ def _target_imbalance(df: pd.DataFrame, target: str) -> dict[str, Any]:
 def run_eda(df: pd.DataFrame, session: SessionState) -> dict[str, Any]:
     """
     Compute EDA bundle; LLM writes narrative (heavy model). Stores results and summaries in session.
+    Large datasets (>50k rows) are sampled for expensive computations; full df used for
+    missing patterns and class imbalance (cheap operations).
     """
     task = session.task_config or {}
     target = str(task.get("target_column") or "")
 
+    # Sample for expensive computations — missing_patterns and target_imbalance use full df
+    df_sample, was_sampled = _sample_for_eda(df)
+    if was_sampled:
+        logger.info(
+            "EDA: dataset has %d rows → sampling %d rows for correlation/distribution analysis.",
+            len(df), _EDA_SAMPLE_ROWS,
+        )
+
     results: dict[str, Any] = {
-        "distribution_shapes": _distribution_shapes(df),
-        "correlation_matrix": _full_correlation_matrix(df),
-        "outlier_flags": _outlier_flags(df),
-        "missing_patterns": _missing_patterns(df),
-        "target_correlations": _target_correlations(df, target) if target else {},
-        "target_imbalance": _target_imbalance(df, target) if target else {},
+        "distribution_shapes": _distribution_shapes(df_sample),
+        "correlation_matrix": _full_correlation_matrix(df_sample),
+        "outlier_flags": _outlier_flags(df_sample),
+        "missing_patterns": _missing_patterns(df),           # fast: use full df
+        "target_correlations": _target_correlations(df_sample, target) if target else {},
+        "target_imbalance": _target_imbalance(df, target) if target else {},  # full df
         "target_column": target,
+        "eda_sampled": was_sampled,
+        "eda_n_rows_used": _EDA_SAMPLE_ROWS if was_sampled else len(df),
     }
 
     # Near-redundant pairs: |corr| > 0.95 off-diagonal
@@ -267,9 +291,4 @@ JSON only: {{"narrative": "...", "user_summary": "..."}}"""
         action="run_eda_complete",
         rationale=user_summary[:1200],
     )
-    try:
-        session.eda_chat_messages = build_eda_chat_messages(df, session, compact)
-    except Exception as e:
-        logger.warning("EDA chat visuals failed: %s", e)
-        session.eda_chat_messages = []
     return results

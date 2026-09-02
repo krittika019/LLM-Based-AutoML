@@ -1466,3 +1466,98 @@ hr.run-divider { border: none; border-top: 1px solid rgba(255,255,255,0.08); mar
   .lp-stats-divider { width: 60px; height: 1px; }
   .lp-nav-links { display: none; }
 }
+
+/* ── Token Cost Table ────────────────────────────────────────────────────── */
+.token-cost-wrap {
+  margin: 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+.token-cost-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.token-cost-summary {
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.token-cost-sep { color: var(--border); }
+.token-cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87rem;
+}
+.token-cost-table th {
+  text-align: left;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+.token-cost-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+.token-cost-table tr:last-child td { border-bottom: none; }
+.token-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+.token-bar {
+  height: 6px;
+  background: var(--accent);
+  border-radius: 3px;
+  min-width: 2px;
+  opacity: 0.75;
+}
+.token-bar-pct {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Elimination Audit badge ─────────────────────────────────────────────── */
+.leakage-warning-banner {
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.35);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #fca5a5;
+  line-height: 1.5;
+}
+.elim-audit {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  background: rgba(99,102,241,0.08);
+  border: 1px solid rgba(99,102,241,0.22);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.elim-audit-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+.elim-audit-text { color: var(--text-secondary); }
+.elim-audit-text code {
+  background: rgba(255,255,255,0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}

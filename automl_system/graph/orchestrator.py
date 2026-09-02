@@ -5,8 +5,6 @@ LangGraph workflow: Phase 2 planning + Phase 3 preprocessing + Phase 4/5 executi
 from __future__ import annotations
 
 import logging
-import tempfile
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -18,13 +16,12 @@ from automl_system.agents.failure_diagnosis import diagnose_failure
 from automl_system.llm.client import LLMClient
 from automl_system.agents.pipeline_planner import make_execution_plan
 from automl_system.agents.preprocessing_planner import make_preprocessing_plan
-from automl_system.agents.report_generator import generate_report, generate_stakeholder_report_text
-from automl_system.pipeline.stakeholder_pdf import build_stakeholder_pdf
+from automl_system.agents.report_generator import generate_report
 from automl_system.pipeline.cleaning import basic_clean
 from automl_system.pipeline.code_generator import generate_pipeline_script
 from automl_system.pipeline.deep_cleaning import deep_clean
 from automl_system.pipeline.eda import run_eda
-from automl_system.pipeline.execution import MissingTargetError, run_pipeline
+from automl_system.pipeline.execution import MissingTargetError, run_pipeline, split_dataframe
 from automl_system.pipeline.feature_engineering import engineer_features
 from automl_system.pipeline.feature_selection import select_features
 from automl_system.pipeline.verification import (
@@ -38,14 +35,22 @@ from automl_system.pipeline.verification import (
     verify_preprocessing,
 )
 from automl_system.state.session import SessionState
-from automl_system.utils.dataset_profile import build_semantic_profile_vector, compute_dataset_profile
-from automl_system.memory import semantic as semantic_memory
+from automl_system.utils.dataset_profile import compute_dataset_profile
 
 logger = logging.getLogger(__name__)
 
+
+def _record_phase_calls(session: SessionState, phase: str, calls_at_start: int) -> None:
+    """Accumulate LLM call count for this phase into session.token_cost_table."""
+    delta = LLMClient.call_count - calls_at_start
+    tbl = dict(session.token_cost_table or {})
+    tbl[phase] = tbl.get(phase, 0) + delta
+    session.token_cost_table = tbl
+
+
 _REWIND_CHECKPOINT: dict[str, str] = {
     STEP_BASIC_CLEAN: "initial",
-    STEP_EDA: "after_basic_cleaning",
+    STEP_EDA: "after_split",
     STEP_FEATURE_SELECTION: "after_eda",
     STEP_DEEP_CLEANING: "after_feature_selection",
     STEP_FEATURE_ENGINEERING: "after_deep_cleaning",
@@ -57,6 +62,7 @@ class OrchestratorState(TypedDict, total=False):
 
     session: dict[str, Any]
     df: Any
+    df_test: Any
     messages: list[str]
     checkpoints: dict[str, Any]
     verification_ok: bool
@@ -82,6 +88,8 @@ def node_planning(state: OrchestratorState) -> OrchestratorState:
             session.dataset_profile = compute_dataset_profile(
                 df, target_column=str((session.task_config or {}).get("target_column") or "") or None
             )
+        if not session.initial_dataset_profile:
+            session.initial_dataset_profile = dict(session.dataset_profile)
     make_preprocessing_plan(session)
     msgs = list(state.get("messages") or [])
     plan = session.preprocessing_plan or {}
@@ -106,7 +114,7 @@ def node_planning(state: OrchestratorState) -> OrchestratorState:
         challenges.append("**Planning notes:** " + "; ".join(str(n) for n in notes[:6]))
     if plan.get("scaling_needed"):
         challenges.append("**Scaling:** numeric features may need scaling for distance-based models.")
-    fe = bool(plan.get("feature_engineering_recommended") or plan.get("feature_engineering_likely"))
+    fe = bool(plan.get("feature_engineering_recommended"))
     challenges.append(
         f"**Feature engineering:** {'will be attempted' if fe else 'is deferred'} "
         f"({'dataset size supports derived features' if fe else 'small or simple dataset — start with baseline features'})."
@@ -115,6 +123,7 @@ def node_planning(state: OrchestratorState) -> OrchestratorState:
     block += "\n".join(f"- {c}" for c in challenges) if challenges else "- Baseline preprocessing plan generated from profile.\n"
     block += f"\n\n{session.user_summary_planning or 'Planning complete.'}\n"
     msgs.append(block)
+    _record_phase_calls(session, "planning", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 2 Planning", calls0))
     return {"session": session.to_dict(), "df": df, "messages": msgs}
 
@@ -154,30 +163,67 @@ def node_basic_cleaning(state: OrchestratorState) -> OrchestratorState:
     return {"session": session.to_dict(), "df": out, "checkpoints": ck, "messages": msgs}
 
 
+def node_split_data(state: OrchestratorState) -> OrchestratorState:
+    """
+    Train/test split, run BEFORE any preprocessing that fits/learns from data
+    (feature selection, deep cleaning, feature engineering) — so those steps
+    can fit on the train half only and never leak test rows into learned
+    parameters (imputation values, scaler bounds, encoder mappings, target
+    encodings, engineered-feature accept/reject decisions).
+    """
+    session = _session(state)
+    df = state.get("df")
+    if df is None:
+        raise ValueError("split_data requires state['df']")
+    df_train, df_test = split_dataframe(df, session)
+    session.expected_shape = (len(df_train), df_train.shape[1])
+    ck = dict(state.get("checkpoints") or {})
+    ck["after_split"] = {"train": df_train.copy(), "test": df_test.copy()}
+    msgs = list(state.get("messages") or [])
+    msgs.append(
+        f"### Phase 3 — Train/test split\n\n"
+        f"Split before preprocessing so imputation, scaling, encoding, and "
+        f"feature engineering fit on the train rows only "
+        f"(train={len(df_train)}, test={len(df_test)})."
+    )
+    return {
+        "session": session.to_dict(), "df": df_train, "df_test": df_test,
+        "checkpoints": ck, "messages": msgs,
+    }
+
+
 def node_eda(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     df = state["df"]
     calls0 = LLMClient.call_count
     run_eda(df, session)
     ck = dict(state.get("checkpoints") or {})
-    ck["after_eda"] = df.copy()
+    ck["after_eda"] = {"train": df.copy(), "test": state.get("df_test").copy()}
     msgs = list(state.get("messages") or [])
     msgs.append("### Phase 3 — EDA narrative\n\n" + (session.user_summary_eda or ""))
-    for m in session.eda_chat_messages or []:
-        if isinstance(m, dict) and m.get("content"):
-            msgs.append(m)
-        elif isinstance(m, str):
-            msgs.append({"role": "assistant", "content": m})
+    _record_phase_calls(session, "eda", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 3 EDA", calls0))
-    return {"session": session.to_dict(), "df": df, "checkpoints": ck, "messages": msgs}
+    return {
+        "session": session.to_dict(), "df": df, "df_test": state.get("df_test"),
+        "checkpoints": ck, "messages": msgs,
+    }
 
 
 def node_feature_selection(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     calls0 = LLMClient.call_count
-    df = select_features(state["df"], session)
+    df_in = state["df"]
+    df = select_features(df_in, session)
     ck = dict(state.get("checkpoints") or {})
     msgs = list(state.get("messages") or [])
+
+    # Apply the identical drop decision to df_test — select_features only ever
+    # drops columns, so the dropped set is exactly what's missing from `df`.
+    df_test_in = state.get("df_test")
+    df_test = None
+    if df_test_in is not None:
+        dropped = [c for c in df_in.columns if c not in df.columns]
+        df_test = df_test_in.drop(columns=[c for c in dropped if c in df_test_in.columns])
 
     # Scenario: too few features remain → pipeline stop
     if (session.task_config or {}).get("_pipeline_stop") == "too_few_features":
@@ -191,11 +237,11 @@ def node_feature_selection(state: OrchestratorState) -> OrchestratorState:
         emit.append({"type": "phase_done", "phase": "feature_selection"})
         emit.append({"type": "pipeline_stopped", "reason": "too_few_features"})
         return {
-            "session": session.to_dict(), "df": df, "checkpoints": ck,
+            "session": session.to_dict(), "df": df, "df_test": df_test, "checkpoints": ck,
             "messages": msgs, "pipeline_complete": True, "events_to_emit": emit,
         }
 
-    ck["after_feature_selection"] = df.copy()
+    ck["after_feature_selection"] = {"train": df.copy(), "test": df_test.copy() if df_test is not None else None}
     lines = ["### Phase 3 — Feature selection\n"]
     high_drop = (session.preprocessing_meta or {}).get("feature_selection_high_drop_warning")
     if high_drop:
@@ -209,16 +255,22 @@ def node_feature_selection(state: OrchestratorState) -> OrchestratorState:
     if len(lines) == 1 or (len(lines) == 2 and high_drop):
         lines.append("- No columns dropped at this step.")
     msgs.append("\n".join(lines))
+    _record_phase_calls(session, "feature_selection", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 3 Feature selection", calls0))
-    return {"session": session.to_dict(), "df": df, "checkpoints": ck, "messages": msgs}
+    return {
+        "session": session.to_dict(), "df": df, "df_test": df_test,
+        "checkpoints": ck, "messages": msgs,
+    }
 
 
 def node_deep_cleaning(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     calls0 = LLMClient.call_count
-    df = deep_clean(state["df"], session)
+    df_test_in = state.get("df_test")
+    result = deep_clean(state["df"], session, df_test=df_test_in)
+    df, df_test = result if df_test_in is not None else (result, None)
     ck = dict(state.get("checkpoints") or {})
-    ck["after_deep_cleaning"] = df.copy()
+    ck["after_deep_cleaning"] = {"train": df.copy(), "test": df_test.copy() if df_test is not None else None}
     msgs = list(state.get("messages") or [])
     lines = ["### Phase 3 — Deep cleaning & encoding\n"]
     assign = session.deep_cleaning_assignments or {}
@@ -239,16 +291,22 @@ def node_deep_cleaning(state: OrchestratorState) -> OrchestratorState:
     if dim_warn:
         lines.append(f"\n> **Dimensionality warning:** {dim_warn}")
     msgs.append("\n".join(lines))
+    _record_phase_calls(session, "deep_cleaning", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 3 Deep cleaning", calls0))
-    return {"session": session.to_dict(), "df": df, "checkpoints": ck, "messages": msgs}
+    return {
+        "session": session.to_dict(), "df": df, "df_test": df_test,
+        "checkpoints": ck, "messages": msgs,
+    }
 
 
 def node_feature_engineering(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     calls0 = LLMClient.call_count
-    df = engineer_features(state["df"], session)
+    df_test_in = state.get("df_test")
+    result = engineer_features(state["df"], session, df_test=df_test_in)
+    df, df_test = result if df_test_in is not None else (result, None)
     ck = dict(state.get("checkpoints") or {})
-    ck["after_feature_engineering"] = df.copy()
+    ck["after_feature_engineering"] = {"train": df.copy(), "test": df_test.copy() if df_test is not None else None}
     msgs = list(state.get("messages") or [])
     lines = ["### Phase 3 — Feature engineering\n"]
     fe_log = session.feature_engineering_log or []
@@ -266,15 +324,20 @@ def node_feature_engineering(state: OrchestratorState) -> OrchestratorState:
         if len(lines) == 1:
             lines.append("- No engineered features added.")
     msgs.append("\n".join(lines))
+    _record_phase_calls(session, "feature_engineering", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 3 Feature engineering", calls0))
-    return {"session": session.to_dict(), "df": df, "checkpoints": ck, "messages": msgs}
+    return {
+        "session": session.to_dict(), "df": df, "df_test": df_test,
+        "checkpoints": ck, "messages": msgs,
+    }
 
 
 def node_verification(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     df = state["df"]
+    df_test = state.get("df_test")
     ck = dict(state.get("checkpoints") or {})
-    ok, raw_msg = verify_preprocessing(df, session)
+    ok, raw_msg = verify_preprocessing(df, session, df_test=df_test)
     user_msg, fail_step = parse_verification_route(raw_msg)
     msgs = list(state.get("messages") or [])
     msgs.append(user_msg if not ok else raw_msg)
@@ -282,6 +345,7 @@ def node_verification(state: OrchestratorState) -> OrchestratorState:
     out: OrchestratorState = {
         "session": session.to_dict(),
         "df": df,
+        "df_test": df_test,
         "checkpoints": ck,
         "messages": msgs,
         "verification_ok": ok,
@@ -313,7 +377,12 @@ def node_verification(state: OrchestratorState) -> OrchestratorState:
                 msgs.append(f"Suggested fix: {fix}")
             key = _REWIND_CHECKPOINT.get(fail_step)
             if key and key in ck:
-                out["df"] = ck[key].copy()
+                snap = ck[key]
+                if isinstance(snap, dict) and "train" in snap:
+                    out["df"] = snap["train"].copy()
+                    out["df_test"] = snap["test"].copy() if snap.get("test") is not None else None
+                else:
+                    out["df"] = snap.copy()
                 msgs.append(f"Retry {session.retry_counts[fail_step]}/{config.MAX_STEP_RETRIES}: rewinding to {fail_step}.")
             else:
                 logger.warning("Missing checkpoint %s for retry %s", key, fail_step)
@@ -334,10 +403,24 @@ def node_phase4_planning(state: OrchestratorState) -> OrchestratorState:
         session.dataset_profile = compute_dataset_profile(
             df, target_column=str((session.task_config or {}).get("target_column") or "") or None
         )
-    plan = make_execution_plan(session)
+    plan = make_execution_plan(session, df=df)
     msgs = list(state.get("messages") or [])
 
     block = "### Phase 4 — Planning (Mode 2: execution)\n\n"
+
+    # Dataset difficulty score (computed by code, not LLM)
+    difficulty = plan.get("difficulty") or (session.dataset_profile or {}).get("difficulty") or {}
+    if difficulty:
+        diff_label = str(difficulty.get("label") or "unknown")
+        diff_score = float(difficulty.get("overall") or 0.0)
+        diff_colors = {"easy": "🟢", "moderate": "🟡", "hard": "🟠", "very_hard": "🔴"}
+        diff_icon = diff_colors.get(diff_label, "⚪")
+        block += f"**Dataset difficulty:** {diff_icon} `{diff_label}` (score {diff_score:.2f})"
+        comps = difficulty.get("components") or {}
+        if comps:
+            top = sorted(comps.items(), key=lambda x: x[1], reverse=True)[:2]
+            block += " · drivers: " + ", ".join(f"`{k}={v:.2f}`" for k, v in top if v > 0.1)
+        block += "\n\n"
 
     # Dataset context assembled by code (not LLM)
     ctx = plan.get("dataset_context") or {}
@@ -382,38 +465,46 @@ def node_phase4_planning(state: OrchestratorState) -> OrchestratorState:
     thr = plan.get("threshold")
     thr_note = plan.get("threshold_rationale") or ""
     if isinstance(thr, (int, float)):
-        block += f"\n**Performance threshold:** `{float(thr):.4f}` — {thr_note}\n"
+        plan_metric = str(plan.get("metric") or "")
+        is_neg_metric = plan_metric.startswith("neg_")
+        disp_thr = -float(thr) if is_neg_metric else float(thr)
+        cmp = "≤" if is_neg_metric else "≥"
+        block += f"\n**Performance threshold:** `{cmp} {disp_thr:.4f}` — {thr_note}\n"
 
     msgs.append(block)
+    _record_phase_calls(session, "execution_planning", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 4 Execution planning", calls0))
     return {"messages": msgs, "session": session.to_dict(), "df": df}
 
-
-def node_split_data(state: OrchestratorState) -> OrchestratorState:
-    session = _session(state)
-    msgs = list(state.get("messages") or [])
-    task_type = str((session.execution_plan or {}).get("task_type") or "tabular")
-    msgs.append(f"Execution split_data: preparing a shared 80/20 {'stratified' if task_type == 'classification' else 'standard'} split.")
-    return {
-        "messages": msgs,
-        "session": session.to_dict(),
-        "df": state.get("df"),
-        "execution_results": dict(state.get("execution_results") or {}),
-    }
 
 
 def node_train_evaluate(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     df = state.get("df")
+    df_test = state.get("df_test")
     if df is None:
         raise ValueError("train_evaluate requires state['df']")
     msgs = list(state.get("messages") or [])
     results: dict[str, Any] = {}
     calls0 = LLMClient.call_count
     try:
-        results = run_pipeline(df, session)
+        results = run_pipeline(df, session, df_test=df_test)
         tbl = results.get("comparison_table") or []
-        msgs.append("### Phase 5 — Model training & evaluation\n")
+        split_meta = results.get("split_meta") or {}
+        n_train = int(split_meta.get("n_train") or 0)
+        n_test = int(split_meta.get("n_test") or 0)
+        total = n_train + n_test
+        if total > 0:
+            test_pct = round(n_test / total * 100)
+        else:
+            test_pct = int(float(split_meta.get("test_size") or 0.20) * 100)
+        train_pct = 100 - test_pct
+        msgs.append(
+            f"### Phase 5 — Model training & evaluation\n\n"
+            f"**Split:** {train_pct}/{test_pct} "
+            f"(train={split_meta.get('n_train')}, test={split_meta.get('n_test')}, "
+            f"type={split_meta.get('split_type')})\n"
+        )
         # Show progressive elimination notice if applicable
         eliminated = next(
             (r.get("model_name") for r in tbl if r.get("status") == "eliminated_round1"), None
@@ -459,6 +550,7 @@ def node_train_evaluate(state: OrchestratorState) -> OrchestratorState:
             f"### Phase 5 — Execution blocked\n\n**Missing target:** {text}\n"
             "Resolve the target via the task classifier (Phase 1), then rerun."
         )
+    _record_phase_calls(session, "model_training", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 5 Execution", calls0))
     return {
         "messages": msgs,
@@ -467,17 +559,6 @@ def node_train_evaluate(state: OrchestratorState) -> OrchestratorState:
         "execution_results": results,
     }
 
-
-def node_interpret_results(state: OrchestratorState) -> OrchestratorState:
-    # Interpretation is displayed by ModelTable in the frontend; no message needed here.
-    session = _session(state)
-    results = dict(state.get("execution_results") or session.execution_results or {})
-    return {
-        "messages": list(state.get("messages") or []),
-        "session": session.to_dict(),
-        "df": state.get("df"),
-        "execution_results": results,
-    }
 
 
 def node_threshold_check(state: OrchestratorState) -> OrchestratorState:
@@ -500,15 +581,91 @@ def node_threshold_check(state: OrchestratorState) -> OrchestratorState:
         ok = float(best) >= float(threshold)
         gap = float(best) - float(threshold)
         status_str = "**✅ passed**" if ok else "**❌ not met**"
+        metric_key = str(plan.get("metric") or "")
+        is_neg = metric_key.startswith("neg_")
+        # Display human-readable values: negate neg_* scores so users see positive RMSE/MAE
+        disp_thr = -float(threshold) if is_neg else float(threshold)
+        disp_best = -float(best) if is_neg else float(best)
+        disp_gap = disp_best - disp_thr if is_neg else gap
+        cmp_sym = "≤" if is_neg else "≥"
         msgs.append(
-            f"- Target threshold: `{float(threshold):.4f}` | Best test score: `{float(best):.4f}` "
-            f"| Gap: `{gap:+.4f}` → {status_str}"
+            f"- Target threshold: `{cmp_sym} {disp_thr:.4f}` | Best score: `{disp_best:.4f}` "
+            f"| Gap: `{disp_gap:+.4f}` → {status_str}"
         )
     else:
         msgs.append("Threshold check skipped: threshold or best score unavailable.")
 
     user_satisfied = bool((session.task_config or {}).get("user_satisfied", False))
     maxed = int(session.iteration_count) >= int(config.MAX_ITERATIONS)
+
+    # Convergence check: no meaningful improvement from last iteration
+    all_results_so_far = list(session.all_results or [])
+    converged = False
+    if not ok and not maxed and len(all_results_so_far) >= 2:
+        prev_score = all_results_so_far[-2].get("best_test_score")
+        curr_score = results.get("best_test_score")
+        if isinstance(prev_score, (int, float)) and isinstance(curr_score, (int, float)):
+            if float(curr_score) <= float(prev_score) + 0.001:
+                converged = True
+
+    # ── Early-exit conditions (prevent wasteful reiteration) ────────────────
+    # Reiteration is only valuable when:
+    #   (a) the diagnosis agent can identify something SPECIFIC to fix (preprocessing
+    #       issue, leaky feature, wrong imputation), OR
+    #   (b) there are model families that haven't been tried yet.
+    # These conditions detect cases where neither is true — so we exit early.
+    #
+    # Note: Condition A (beats competitors) only applies in benchmark mode where
+    # internal FLAML/AutoGluon runs happened — it won't fire in user mode because
+    # best_competitor_score will be None.
+    early_exit_reason: str | None = None
+    preprocessing_has_issue = bool(
+        session.preprocessing_meta.get("verification_failed")
+        or session.preprocessing_meta.get("verification_null_cols")
+    )
+
+    if not ok and not maxed and not converged and isinstance(best, (int, float)):
+        best_competitor = results.get("best_competitor_score")
+        models_trained: list = results.get("models_trained") or []
+
+        # Exit condition A (benchmark mode only): score already beats internal competitors.
+        # Only fires when competitor scores exist — silent in user mode.
+        if isinstance(best_competitor, (int, float)) and float(best) >= float(best_competitor):
+            early_exit_reason = (
+                f"Score {best:.4f} already beats or matches best competitor "
+                f"({best_competitor:.4f}). Threshold may be aspirational — "
+                "reiteration cannot improve competitive standing."
+            )
+
+        # Exit condition B: threshold gap is too large to close with model selection.
+        # A gap > 0.10 means the data ceiling is below the threshold — not a fixable
+        # modelling problem. Applies equally in user mode and benchmark mode.
+        elif isinstance(threshold, (int, float)):
+            gap = float(threshold) - float(best)
+            if gap > 0.10:
+                early_exit_reason = (
+                    f"Gap to threshold is {gap:.4f} (threshold={threshold:.4f}, "
+                    f"best={best:.4f}). A gap > 0.10 reflects a data ceiling — "
+                    "model selection alone cannot close it. "
+                    "Consider collecting more data or revisiting the target definition."
+                )
+
+        # Exit condition C: broad model family set already tried AND preprocessing is clean.
+        # If preprocessing had a specific issue (null imputation failure, leaky feature),
+        # we allow reiteration — diagnosis can route back to fix it.
+        # But if preprocessing passed verification and we've tried 5+ families,
+        # reiteration would just reshuffle the same candidates.
+        elif len(models_trained) >= 5 and not preprocessing_has_issue:
+            early_exit_reason = (
+                f"Already trained {len(models_trained)} model families "
+                f"({', '.join(models_trained[:5])}{'...' if len(models_trained) > 5 else ''}) "
+                "and preprocessing passed all verification checks. "
+                "Reiteration would reshuffle the same candidates with no new signal."
+            )
+
+    if early_exit_reason:
+        msgs.append(f"→ **Early exit:** {early_exit_reason}")
+        converged = True  # reuse the converged path to reach Phase 7
 
     # — Three explicit exit conditions —
     if ok:
@@ -520,6 +677,20 @@ def node_threshold_check(state: OrchestratorState) -> OrchestratorState:
             f"→ **Exit condition 2:** Maximum iterations ({config.MAX_ITERATIONS}) reached without "
             "meeting threshold — proceeding to Phase 7 with best result available."
         )
+    elif converged:
+        if early_exit_reason:
+            # early_exit_reason message already appended above; just signal Phase 7.
+            msgs.append("→ Proceeding to Phase 7 with best result available.")
+        elif len(all_results_so_far) >= 2:
+            _prev = all_results_so_far[-2].get('best_test_score')
+            _curr = results.get('best_test_score')
+            msgs.append(
+                "→ **Exit condition 4:** No meaningful score improvement from last iteration "
+                f"(prev={_prev:.4f}, curr={_curr:.4f}) — further iterations unlikely to help. "
+                "Proceeding to Phase 7 with best result available."
+            )
+        else:
+            msgs.append("→ **Exit condition 4:** Proceeding to Phase 7 with best result available.")
     elif user_satisfied:
         msgs.append("→ User satisfaction flag set — proceeding to Phase 7.")
     # Exit condition 3 (fundamental_data_insufficiency) is detected in node_diagnose_failure
@@ -530,7 +701,7 @@ def node_threshold_check(state: OrchestratorState) -> OrchestratorState:
         "session": session.to_dict(),
         "df": state.get("df"),
         "execution_results": results,
-        "threshold_ok": ok,
+        "threshold_ok": ok or converged or maxed or user_satisfied,
     }
 
 
@@ -653,6 +824,12 @@ def node_targeted_revision(state: OrchestratorState) -> OrchestratorState:
         "_Only the affected phase(s) and all phases downstream of it will re-run._"
     )
 
+    # When re-entering preprocessing, clear the stale execution plan so Phase 4
+    # re-plans from scratch with the corrected data — avoids using a plan built on
+    # features that no longer exist after re-cleaning.
+    if loop_target in {"basic_cleaning", "deep_cleaning", "feature_selection", "feature_engineering"}:
+        session.execution_plan = {}
+
     return {
         "messages": msgs,
         "session": session.to_dict(),
@@ -734,44 +911,8 @@ def node_phase7_final_output(state: OrchestratorState) -> OrchestratorState:
     session.final_pipeline_script = script
     session.final_comparison_table = merged
 
-    # ── Semantic memory update ────────────────────────────────────────────────
-    try:
-        profile = session.dataset_profile or {}
-        pv = build_semantic_profile_vector(profile)
-        best_res = all_results[-1] if all_results else {}
-        outcome: dict[str, Any] = {
-            "task": str((session.task_config or {}).get("goal") or ""),
-            "target": str((session.task_config or {}).get("target_column") or ""),
-            "best_model": best_res.get("best_model_name"),
-            "best_test_score": best_res.get("best_test_score"),
-            "metric": best_res.get("metric"),
-            "iterations": int(session.iteration_count or 0),
-            "last_failure_type": str(
-                (session.last_failure_diagnosis or {}).get("failure_type") or ""
-            ),
-        }
-        semantic_memory.store_run(pv, outcome)
-        logger.info("Phase 7: semantic memory updated for this run.")
-    except Exception as _sm_err:
-        logger.warning("Phase 7: semantic memory update failed: %s", _sm_err)
-
     # ── Mark session complete ─────────────────────────────────────────────────
     session.is_complete = True
-
-    # ── Stakeholder PDF (non-technical 1-page report) ─────────────────────────
-    try:
-        stakeholder_data = generate_stakeholder_report_text(session, all_results)
-        pdf_bytes = build_stakeholder_pdf(
-            stakeholder_data,
-            all_results,
-            goal=str((session.task_config or {}).get("goal") or ""),
-        )
-        pdf_path = Path(tempfile.gettempdir()) / "automl_stakeholder_report.pdf"
-        pdf_path.write_bytes(pdf_bytes)
-        session.stakeholder_pdf_path = str(pdf_path)
-    except Exception as _sh_err:
-        logger.warning("Stakeholder PDF generation skipped: %s", _sh_err)
-        session.stakeholder_pdf_path = ""
 
     msgs = list(state.get("messages") or [])
 
@@ -793,8 +934,8 @@ def node_phase7_final_output(state: OrchestratorState) -> OrchestratorState:
 
     # Recommendation
     if best_idx is not None and valid_rows:
-        best_name = str(valid_rows[0].get("model_name") or "").replace("*BEST* ", "")
-        best_score_val = valid_rows[0].get("test_score")
+        best_name = str(best_row.get("model_name") or "").replace("*BEST* ", "")
+        best_score_val = best_row.get("test_score")
         explainability_note = (
             f" (selected as best explainable model within 0.01 of the top score — "
             "user requested interpretability)"
@@ -806,12 +947,25 @@ def node_phase7_final_output(state: OrchestratorState) -> OrchestratorState:
             "Validate on a held-out or production-like slice before deployment."
         )
 
+    _record_phase_calls(session, "report_generation", calls0)
     logger.info(LLMClient.phase_call_stats_message("Phase 7 Final report", calls0))
+
+    # ── Token cost summary ────────────────────────────────────────────────────
+    token_tbl = dict(session.token_cost_table or {})
+    total_calls = sum(token_tbl.values())
+    cache_hits = LLMClient.cache_hits
+    token_tbl["_total"] = total_calls
+    token_tbl["_cache_hits"] = cache_hits
+    session.token_cost_table = token_tbl
+
+    final_exec = dict(state.get("execution_results") or {})
+    final_exec["token_cost_table"] = token_tbl
+
     return {
         "messages": msgs,
         "session": session.to_dict(),
         "df": state.get("df"),
-        "execution_results": dict(state.get("execution_results") or {}),
+        "execution_results": final_exec,
         "phase7_done": True,
     }
 
@@ -861,6 +1015,13 @@ def route_after_targeted_revision(state: OrchestratorState) -> str:
     return "phase4_planning"
 
 
+def route_after_feature_selection(state: OrchestratorState) -> str:
+    session = _session(state)
+    if (session.task_config or {}).get("_pipeline_stop") == "too_few_features":
+        return "stop"
+    return "deep_cleaning"
+
+
 def route_after_verification(state: OrchestratorState) -> str:
     if state.get("verification_ok"):
         return "phase4_planning"
@@ -873,15 +1034,14 @@ def build_graph():
     workflow = StateGraph(OrchestratorState)
     workflow.add_node("planning", node_planning)
     workflow.add_node("basic_cleaning", node_basic_cleaning)
+    workflow.add_node("split_data", node_split_data)
     workflow.add_node("eda", node_eda)
     workflow.add_node("feature_selection", node_feature_selection)
     workflow.add_node("deep_cleaning", node_deep_cleaning)
     workflow.add_node("feature_engineering", node_feature_engineering)
     workflow.add_node("verification", node_verification)
     workflow.add_node("phase4_planning", node_phase4_planning)
-    workflow.add_node("split_data", node_split_data)
     workflow.add_node("train_evaluate", node_train_evaluate)
-    workflow.add_node("interpret_results", node_interpret_results)
     workflow.add_node("threshold_check", node_threshold_check)
     workflow.add_node("diagnose_failure", node_diagnose_failure)
     workflow.add_node("targeted_revision", node_targeted_revision)
@@ -889,9 +1049,14 @@ def build_graph():
 
     workflow.set_entry_point("planning")
     workflow.add_edge("planning", "basic_cleaning")
-    workflow.add_edge("basic_cleaning", "eda")
+    workflow.add_edge("basic_cleaning", "split_data")
+    workflow.add_edge("split_data", "eda")
     workflow.add_edge("eda", "feature_selection")
-    workflow.add_edge("feature_selection", "deep_cleaning")
+    workflow.add_conditional_edges(
+        "feature_selection",
+        route_after_feature_selection,
+        {"deep_cleaning": "deep_cleaning", "stop": END},
+    )
     workflow.add_edge("deep_cleaning", "feature_engineering")
     workflow.add_edge("feature_engineering", "verification")
 
@@ -907,10 +1072,8 @@ def build_graph():
             "feature_engineering": "feature_engineering",
         },
     )
-    workflow.add_edge("phase4_planning", "split_data")
-    workflow.add_edge("split_data", "train_evaluate")
-    workflow.add_edge("train_evaluate", "interpret_results")
-    workflow.add_edge("interpret_results", "threshold_check")
+    workflow.add_edge("phase4_planning", "train_evaluate")
+    workflow.add_edge("train_evaluate", "threshold_check")
     workflow.add_conditional_edges(
         "threshold_check",
         route_after_threshold_check,

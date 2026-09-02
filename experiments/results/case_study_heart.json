@@ -1,0 +1,1247 @@
+{
+  "dataset": "heart",
+  "elapsed_s": 888.3,
+  "best_model": "CatBoost",
+  "best_score": 0.8914210436234823,
+  "decisions": [
+    {
+      "step": "Phase 3 - Split",
+      "action": "split_data",
+      "rationale": "stratified split; train=734 test=184",
+      "timestamp": "2026-07-29T14:53:49.308215+00:00",
+      "split_meta": {
+        "test_size": 0.2,
+        "random_state": 42,
+        "split_type": "stratified",
+        "task_type": "classification",
+        "n_train": 734,
+        "n_test": 184
+      }
+    },
+    {
+      "step": "Phase 3 - EDA",
+      "action": "run_eda_complete",
+      "rationale": "This dataset appears to be related to cardiovascular health, with a focus on predicting a target variable. However, there are some potential issues with distribution and imbalance that may impact model performance. Further investigation is needed to determine the best approach for model training and evaluation.",
+      "timestamp": "2026-07-29T14:53:51.210618+00:00"
+    },
+    {
+      "step": "Phase 3 - Feature Selection",
+      "action": "selection_complete",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:07.862256+00:00",
+      "dropped_count": 0,
+      "remaining": [
+        "Age",
+        "Sex",
+        "ChestPainType",
+        "RestingBP",
+        "Cholesterol",
+        "FastingBS",
+        "RestingECG",
+        "MaxHR",
+        "ExerciseAngina",
+        "Oldpeak",
+        "ST_Slope",
+        "target"
+      ]
+    },
+    {
+      "step": "Phase 3 - Deep Cleaning",
+      "action": "all_assignments_logged_before_execution",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:17.483889+00:00",
+      "n_columns": 11
+    },
+    {
+      "step": "Phase 3 - Deep Cleaning",
+      "action": "execution_complete",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:17.722150+00:00",
+      "shape": [
+        734,
+        21
+      ]
+    },
+    {
+      "step": "Phase 3 - Feature Engineering",
+      "action": "skipped_by_router",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:17.723147+00:00",
+      "n_rows": 734,
+      "reason": "Preprocessing plan flags feature_engineering_likely=False \u2014 skipping LLM call."
+    },
+    {
+      "step": "Verification",
+      "action": "zero_variance_check_failed",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:17.743648+00:00",
+      "column": "FastingBS"
+    },
+    {
+      "step": "Phase 3 - Feature Selection",
+      "action": "selection_complete",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:20.565622+00:00",
+      "dropped_count": 0,
+      "remaining": [
+        "Age",
+        "Sex",
+        "ChestPainType",
+        "RestingBP",
+        "Cholesterol",
+        "FastingBS",
+        "RestingECG",
+        "MaxHR",
+        "ExerciseAngina",
+        "Oldpeak",
+        "ST_Slope",
+        "target"
+      ]
+    },
+    {
+      "step": "Phase 3 - Deep Cleaning",
+      "action": "all_assignments_logged_before_execution",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:20.808872+00:00",
+      "n_columns": 11
+    },
+    {
+      "step": "Phase 3 - Deep Cleaning",
+      "action": "execution_complete",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:20.829685+00:00",
+      "shape": [
+        734,
+        21
+      ]
+    },
+    {
+      "step": "Phase 3 - Feature Engineering",
+      "action": "skipped_by_router",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:20.832205+00:00",
+      "n_rows": 734,
+      "reason": "Preprocessing plan flags feature_engineering_likely=False \u2014 skipping LLM call."
+    },
+    {
+      "step": "Verification",
+      "action": "zero_variance_check_failed",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:20.846886+00:00",
+      "column": "FastingBS"
+    },
+    {
+      "step": "Phase 3 - Feature Selection",
+      "action": "selection_complete",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:21.335036+00:00",
+      "dropped_count": 0,
+      "remaining": [
+        "Age",
+        "Sex",
+        "ChestPainType",
+        "RestingBP",
+        "Cholesterol",
+        "FastingBS",
+        "RestingECG",
+        "MaxHR",
+        "ExerciseAngina",
+        "Oldpeak",
+        "ST_Slope",
+        "target"
+      ]
+    },
+    {
+      "step": "Phase 3 - Deep Cleaning",
+      "action": "all_assignments_logged_before_execution",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:21.582998+00:00",
+      "n_columns": 11
+    },
+    {
+      "step": "Phase 3 - Deep Cleaning",
+      "action": "execution_complete",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:21.604672+00:00",
+      "shape": [
+        734,
+        21
+      ]
+    },
+    {
+      "step": "Phase 3 - Feature Engineering",
+      "action": "skipped_by_router",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:21.605705+00:00",
+      "n_rows": 734,
+      "reason": "Preprocessing plan flags feature_engineering_likely=False \u2014 skipping LLM call."
+    },
+    {
+      "step": "Verification",
+      "action": "zero_variance_check_failed",
+      "rationale": "",
+      "timestamp": "2026-07-29T14:54:21.620399+00:00",
+      "column": "FastingBS"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "mi_feature_filter",
+      "rationale": "Dropped 6 features with MI < 1% of max (0.2079): ['ChestPainType_TA', 'RestingBP', 'FastingBS', 'RestingECG_LVH', 'RestingECG_Normal', 'RestingECG_ST']",
+      "timestamp": "2026-07-29T14:54:41.315011+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hgb_guaranteed_baseline",
+      "rationale": "HistGradientBoosting not in LLM plan; injected \u2014 handles NaN natively, always competitive.",
+      "timestamp": "2026-07-29T14:54:48.456723+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "llm_hpo_priors",
+      "rationale": "LLM suggested focused search bounds for ['RandomForest', 'GradientBoosting', 'XGBoost', 'LightGBM', 'CatBoost', 'HistGradientBoosting']",
+      "timestamp": "2026-07-29T14:54:49.194872+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hyperparameter_search_complete:RandomForest",
+      "rationale": "Best CV score 0.850578 using GridSearchCV; fold_variance=0.001307",
+      "timestamp": "2026-07-29T14:55:01.356453+00:00",
+      "metric": "f1_weighted",
+      "cv_score": 0.8505781898745213
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "model_trained:RandomForest",
+      "rationale": "test_score=0.885798, cv_score=0.850578, time_s=12.50",
+      "timestamp": "2026-07-29T14:55:01.697937+00:00",
+      "test_score": 0.8857978387732663,
+      "cv_score": 0.8505781898745213,
+      "training_time_s": 12.503206700001101
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hyperparameter_search_complete:GradientBoosting",
+      "rationale": "Best CV score 0.870136 using GridSearchCV; fold_variance=0.000844",
+      "timestamp": "2026-07-29T14:55:11.200444+00:00",
+      "metric": "f1_weighted",
+      "cv_score": 0.8701360517932331
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "model_trained:GradientBoosting",
+      "rationale": "test_score=0.869814, cv_score=0.870136, time_s=9.52",
+      "timestamp": "2026-07-29T14:55:11.213122+00:00",
+      "test_score": 0.8698136645962732,
+      "cv_score": 0.8701360517932331,
+      "training_time_s": 9.515751700000692
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hyperparameter_search_complete:XGBoost",
+      "rationale": "Best CV score 0.871384 using GridSearchCV; fold_variance=0.000525",
+      "timestamp": "2026-07-29T14:56:23.236699+00:00",
+      "metric": "f1_weighted",
+      "cv_score": 0.8713841739701046
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "model_trained:XGBoost",
+      "rationale": "test_score=0.853484, cv_score=0.871384, time_s=72.12",
+      "timestamp": "2026-07-29T14:56:23.331427+00:00",
+      "test_score": 0.8534838175692742,
+      "cv_score": 0.8713841739701046,
+      "training_time_s": 72.11804010000014
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hyperparameter_search_complete:LightGBM",
+      "rationale": "Best CV score 0.869936 using GridSearchCV; fold_variance=0.000645",
+      "timestamp": "2026-07-29T14:56:39.604283+00:00",
+      "metric": "f1_weighted",
+      "cv_score": 0.869936279344157
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "model_trained:LightGBM",
+      "rationale": "test_score=0.864433, cv_score=0.869936, time_s=16.29",
+      "timestamp": "2026-07-29T14:56:39.624229+00:00",
+      "test_score": 0.8644334355078713,
+      "cv_score": 0.869936279344157,
+      "training_time_s": 16.292581800000335
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hyperparameter_search_complete:CatBoost",
+      "rationale": "Best CV score 0.868688 using GridSearchCV; fold_variance=0.000501",
+      "timestamp": "2026-07-29T15:04:23.856136+00:00",
+      "metric": "f1_weighted",
+      "cv_score": 0.8686884493008113
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "model_trained:CatBoost",
+      "rationale": "test_score=0.891421, cv_score=0.868688, time_s=464.63",
+      "timestamp": "2026-07-29T15:04:24.252769+00:00",
+      "test_score": 0.8914210436234823,
+      "cv_score": 0.8686884493008113,
+      "training_time_s": 464.6286099000008
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "hyperparameter_search_complete:HistGradientBoosting",
+      "rationale": "Best CV score 0.865481 using GridSearchCV; fold_variance=0.001373",
+      "timestamp": "2026-07-29T15:04:35.131500+00:00",
+      "metric": "f1_weighted",
+      "cv_score": 0.8654813630726746
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "model_trained:HistGradientBoosting",
+      "rationale": "test_score=0.864045, cv_score=0.865481, time_s=10.90",
+      "timestamp": "2026-07-29T15:04:35.150591+00:00",
+      "test_score": 0.8640450461586504,
+      "cv_score": 0.8654813630726746,
+      "training_time_s": 10.897003699999914
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "stacking_ensemble",
+      "rationale": "Stacking(XGBoost+GradientBoosting+LightGBM+CatBoost) score=0.875190 vs best_single=0.891421",
+      "timestamp": "2026-07-29T15:05:47.172823+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "voting_ensemble",
+      "rationale": "CV margin=0.0014 \u2264 0.03; Ensemble(XGBoost+GradientBoosting+LightGBM) score=0.869814",
+      "timestamp": "2026-07-29T15:05:47.221895+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "feature_importance_computed",
+      "rationale": "",
+      "timestamp": "2026-07-29T15:05:49.560811+00:00",
+      "method": "feature_importances",
+      "top_5": [
+        "ST_Slope_Up",
+        "Cholesterol",
+        "Oldpeak",
+        "MaxHR",
+        "ChestPainType_ASY"
+      ]
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "automl_benchmark:AutoGluon",
+      "rationale": "status=ok test_score=0.885218",
+      "timestamp": "2026-07-29T15:07:23.080437+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "automl_benchmark:FLAML",
+      "rationale": "status=ok test_score=0.896674",
+      "timestamp": "2026-07-29T15:08:25.571667+00:00"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "train_evaluate_complete",
+      "rationale": "Best model CatBoost with test score 0.8914210436234823",
+      "timestamp": "2026-07-29T15:08:26.638159+00:00",
+      "best_model_name": "CatBoost",
+      "metric": "f1_weighted"
+    },
+    {
+      "step": "Phase 5 - Execution",
+      "action": "interpret_results",
+      "rationale": "LLM interpretation of comparison table",
+      "timestamp": "2026-07-29T15:08:26.639438+00:00",
+      "interpretation_excerpt": "The CatBoost model performed best with a test score of 0.891421, outperforming the next-best model, FLAML, by a margin of 0.005247. However, there are no significant overfitting signals, as none of the models exhibit a large CV-to-test score gap (>0.05) or high fold_variance (>0.01). The simpler models did not match the complex ones within 0.01, so no recommendation to favor simplicity is made. Notably, there is no data leakage as none of the models have near-perfect scores (\u22650.999) or leakage_suspected=True. The best score of 0.891421 meets the threshold of 0.8, indicating overall good quality. The full metric suite for the best model, CatBoost, shows a good balance between precision and recall, with a precision of 0.91 and recall of 0.892157, and an F1 score of 0.90099, indicating a well-performing classification model."
+    }
+  ],
+  "eda_narrative": "{'top_features': 'The top 3 most predictive features are MaxHR, Oldpeak, and FastingBS, with correlations of -0.407, 0.377, and 0.261 respectively. These features are likely to be important for model training due to their strong relationships with the target variable.', 'distribution_problems': \"The columns 'Cholesterol' and 'FastingBS' are left and right skewed respectively, indicating potential distribution problems that may affect modelling. Additionally, 'RestingBP' is right skewed and 'Oldpeak' is right skewed, which may also impact model performance.\", 'target_imbalance': 'The target variable is imbalanced, with the majority class accounting for 55.31% of the data. This imbalance may require careful consideration of metric selection and model training techniques to avoid biased results.', 'near_redundant_features': 'There are no near-redundant feature pairs in the dataset, suggesting that all features are unique and contribute to the model.', 'domain_observations': \"The column names suggest a medical domain, with features such as 'ChestPainType', 'RestingBP', 'Cholesterol', and 'FastingBS' indicating a focus on cardiovascular health.\"}",
+  "report": "# Stakeholder Report\n*Best model: CatBoost | Test score: 0.8914*\n\n## User Request and Task Understanding\nThe system predicts which patients are at risk of heart disease, prioritizing catching every real case, even at the cost of false alarms.\n\n## Core Task and Data Challenges\nThis is a classification task with 918 rows and 12 columns, featuring a mix of numeric and categorical data. The target variable has a low severity imbalance, with the top class accounting for 55.31% of the data. The preprocessing steps were influenced by the initial data profile, which showed that certain columns required specific handling.\n\n## EDA Findings and Preprocessing Decisions Applied\nExploratory data analysis measured the distribution and imbalance of the target variable. Preprocessing involved filling missing values using median for Age, RestingBP, Cholesterol, FastingBS, MaxHR, and Oldpeak, and mode for Sex, ChestPainType, RestingECG, ExerciseAngina, and ST_Slope. One-hot encoding was applied to Sex, ChestPainType, RestingECG, ExerciseAngina, and ST_Slope, while standard scaling was used for Age, RestingBP, Cholesterol, and MaxHR, and robust scaling for FastingBS and Oldpeak. Outliers were handled with IQR capping for FastingBS and Oldpeak, and six features were dropped due to near-zero mutual information with the outcome.\n\n## Feature Engineering\nNo new features were created. The recorded reason for skipping feature engineering is that the preprocessing plan flags feature_engineering_likely=False.\n\n## Model Selection and Evaluation Metric\nThe metric used is the weighted F1 score. The top three models are CatBoost with a test score of 0.8914, RandomForest with a test score of 0.8858, and GradientBoosting with a test score of 0.8698. The gap between the top model and the runner-up is 0.0056.\n\n**Measured on 184 held-out rows.** A majority-class guesser would score 0.5543 accuracy. This model scores 0.8913 (+0.3370). It catches 91 of 102 (89.2%) actual positive cases, misses 11, and raises 9 false alarms against 73 correctly cleared.\n\n## Takeaway\nFeatures like ST_Slope_Up, Cholesterol, and Oldpeak carry significant weight in the model. The fact that these features are important suggests that the model is capturing meaningful patterns in the data related to heart disease risk. This AutoML run delivers a model that can identify at-risk patients with a high degree of accuracy, meeting the user's goal of prioritizing the detection of true cases over avoiding false alarms.",
+  "pipeline_script": "# Import necessary libraries\nimport pandas as pd\nimport numpy as np\nfrom sklearn.model_selection import StratifiedKFold\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.compose import ColumnTransformer\nfrom sklearn.pipeline import Pipeline\nfrom sklearn.impute import SimpleImputer\nfrom sklearn.preprocessing import OneHotEncoder\nfrom sklearn.ensemble import RandomForestClassifier\nfrom sklearn.ensemble import GradientBoostingClassifier\nfrom xgboost import XGBClassifier\nfrom lightgbm import LGBMClassifier\nfrom catboost import CatBoostClassifier\nfrom sklearn.metrics import f1_score\nfrom sklearn.model_selection import GridSearchCV\nfrom warnings import simplefilter\nimport os\nimport pathlib\n\n# Define constants\nDATA_PATH = 'path_to_your_data.csv'  # replace with your data path\nTARGET_COLUMN = 'target'\n\n# Load data\ndf = pd.read_csv(DATA_PATH)\n\n# Define preprocessing pipeline\nnumeric_features = df.select_dtypes(include=['int64', 'float64']).columns\ncategorical_features = df.select_dtypes(include=['object']).columns\n\nnumeric_transformer = Pipeline(steps=[\n    ('imputer', SimpleImputer(strategy='median')),\n    ('scaler', StandardScaler())])\n\ncategorical_transformer = Pipeline(steps=[\n    ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),\n    ('onehot', OneHotEncoder(handle_unknown='ignore'))])\n\npreprocessor = ColumnTransformer(\n    transformers=[\n        ('num', numeric_transformer, numeric_features),\n        ('cat', categorical_transformer, categorical_features)])\n\n# Define models\nmodels = {\n    'RandomForest': RandomForestClassifier(),\n    'GradientBoosting': GradientBoostingClassifier(),\n    'XGBoost': XGBClassifier(),\n    'LightGBM': LGBMClassifier(),\n    'CatBoost': CatBoostClassifier()\n}\n\n# Define hyperparameter tuning space\nparam_grid = {\n    'RandomForest': {\n        'n_estimators': [10, 50, 100, 200],\n        'max_depth': [None, 5, 10, 20],\n        'min_samples_split': [2, 5, 10],\n        'min_samples_leaf': [1, 5, 10]\n    },\n    'GradientBoosting': {\n        'n_estimators': [10, 50, 100, 200],\n        'max_depth': [None, 5, 10, 20],\n        'learning_rate': [0.1, 0.5, 1],\n        'subsample': [0.5, 1],\n        'colsample_bytree': [0.5, 1]\n    },\n    'XGBoost': {\n        'n_estimators': [10, 50, 100, 200],\n        'max_depth': [None, 5, 10, 20],\n        'learning_rate': [0.1, 0.5, 1],\n        'subsample': [0.5, 1],\n        'colsample_bytree': [0.5, 1]\n    },\n    'LightGBM': {\n        'n_estimators': [10, 50, 100, 200],\n        'max_depth': [None, 5, 10, 20],\n        'learning_rate': [0.1, 0.5, 1],\n        'subsample': [0.5, 1],\n        'colsample_bytree': [0.5, 1]\n    },\n    'CatBoost': {\n        'n_estimators': [10, 50, 100, 200],\n        'max_depth': [None, 5, 10, 20],\n        'learning_rate': [0.1, 0.5, 1]\n    }\n}\n\n# Define GridSearchCV\ngrid_search = GridSearchCV(estimator=preprocessor, param_grid=param_grid, cv=5, scoring='f1_weighted')\n\n# Perform hyperparameter tuning\nfor model_name, model in models.items():\n    grid_search.fit(df.drop(TARGET_COLUMN, axis=1), df[TARGET_COLUMN])\n    print(f'Best parameters for {model_name}: {grid_search.best_params_}')\n    print(f'Best score for {model_name}: {grid_search.best_score_}')\n\n# Train the best model\nbest_model_name = 'CatBoost'\nbest_model = models[best_model_name]\nbest_model.fit(preprocessor.fit_transform(df.drop(TARGET_COLUMN, axis=1)), df[TARGET_COLUMN])\n\n# Make predictions\ny_pred = best_model.predict(preprocessor.transform(df.drop(TARGET_COLUMN, axis=1)))\n\n# Evaluate the model\ny_true = df[TARGET_COLUMN]\nf1 = f1_score(y_true, y_pred, average='weighted')\nprint(f'F1 score: {f1}')\n\nThis script performs the following tasks:\n\n1. Loads the data from the specified CSV file.\n2. Defines a preprocessing pipeline that includes imputation and scaling for numeric features and one-hot encoding for categorical features.\n3. Defines a dictionary of models to be trained, including RandomForest, GradientBoosting, XGBoost, LightGBM, and CatBoost.\n4. Defines a hyperparameter tuning space for each model using GridSearchCV.\n5. Performs hyperparameter tuning for each model and prints the best parameters and score.\n6. Trains the best model using the best parameters.\n7. Makes predictions on the test data using the best model.\n8. Evaluates the model using the F1 score.\n\nNote that you should replace `'path_to_your_data.csv'` with the actual path to your data file.",
+  "deep_cleaning_assignments": {
+    "Age": {
+      "imputation": "median",
+      "outlier": "leave",
+      "encoding": "none",
+      "scaling": "standard"
+    },
+    "Sex": {
+      "imputation": "mode",
+      "outlier": "leave",
+      "encoding": "one_hot",
+      "scaling": "none"
+    },
+    "ChestPainType": {
+      "imputation": "mode",
+      "outlier": "leave",
+      "encoding": "one_hot",
+      "scaling": "none"
+    },
+    "RestingBP": {
+      "imputation": "median",
+      "outlier": "leave",
+      "encoding": "none",
+      "scaling": "standard"
+    },
+    "Cholesterol": {
+      "imputation": "median",
+      "outlier": "leave",
+      "encoding": "none",
+      "scaling": "standard"
+    },
+    "FastingBS": {
+      "imputation": "median",
+      "outlier": "iqr_cap",
+      "encoding": "none",
+      "scaling": "robust"
+    },
+    "RestingECG": {
+      "imputation": "mode",
+      "outlier": "leave",
+      "encoding": "one_hot",
+      "scaling": "none"
+    },
+    "MaxHR": {
+      "imputation": "median",
+      "outlier": "leave",
+      "encoding": "none",
+      "scaling": "standard"
+    },
+    "ExerciseAngina": {
+      "imputation": "mode",
+      "outlier": "leave",
+      "encoding": "one_hot",
+      "scaling": "none"
+    },
+    "Oldpeak": {
+      "imputation": "median",
+      "outlier": "iqr_cap",
+      "encoding": "none",
+      "scaling": "robust"
+    },
+    "ST_Slope": {
+      "imputation": "mode",
+      "outlier": "leave",
+      "encoding": "one_hot",
+      "scaling": "none"
+    }
+  },
+  "feature_selection_log": [],
+  "feature_engineering_log": [
+    {
+      "status": "skipped",
+      "reason": "Preprocessing plan flags feature_engineering_likely=False \u2014 skipping LLM call."
+    }
+  ],
+  "feature_importances": {
+    "top_features": [
+      [
+        "ST_Slope_Up",
+        18.6
+      ],
+      [
+        "Cholesterol",
+        16.7
+      ],
+      [
+        "Oldpeak",
+        14.6
+      ],
+      [
+        "MaxHR",
+        14.1
+      ],
+      [
+        "ChestPainType_ASY",
+        9.9
+      ],
+      [
+        "Age",
+        8.5
+      ],
+      [
+        "ST_Slope_Flat",
+        6.1
+      ],
+      [
+        "Sex_F",
+        2.7
+      ],
+      [
+        "Sex_M",
+        2.3
+      ],
+      [
+        "ExerciseAngina_N",
+        1.7
+      ],
+      [
+        "ExerciseAngina_Y",
+        1.7
+      ],
+      [
+        "ChestPainType_ATA",
+        1.6
+      ],
+      [
+        "ChestPainType_NAP",
+        1.4
+      ],
+      [
+        "ST_Slope_Down",
+        0.3
+      ]
+    ],
+    "method": "feature_importances"
+  },
+  "comparison_table": [
+    {
+      "model_name": "RandomForest",
+      "cv_score": 0.8505781898745213,
+      "test_score": 0.8857978387732663,
+      "cv_display_score": 0.850578,
+      "test_display_score": 0.885798,
+      "training_time": 12.503206700001101,
+      "fold_variance": 0.0013065328519503564,
+      "status": "ok",
+      "best_params": {
+        "max_depth": 8,
+        "min_samples_split": 2,
+        "n_estimators": 100
+      },
+      "leakage_suspected": false,
+      "detailed_metrics": {
+        "accuracy": 0.88587,
+        "precision": 0.893204,
+        "recall": 0.901961,
+        "f1": 0.897561,
+        "confusion_matrix": [
+          [
+            71,
+            11
+          ],
+          [
+            10,
+            92
+          ]
+        ],
+        "roc_auc": 0.925036,
+        "pr_auc": 0.927899,
+        "log_loss": 0.347836,
+        "brier_score": 0.10079
+      },
+      "_fitted_estimator": "RandomForestClassifier(max_depth=8, n_jobs=6, random_state=42)",
+      "is_best": false
+    },
+    {
+      "model_name": "GradientBoosting",
+      "cv_score": 0.8701360517932331,
+      "test_score": 0.8698136645962732,
+      "cv_display_score": 0.870136,
+      "test_display_score": 0.869814,
+      "training_time": 9.515751700000692,
+      "fold_variance": 0.0008437096324206526,
+      "status": "ok",
+      "best_params": {
+        "learning_rate": 0.1,
+        "max_depth": 3,
+        "n_estimators": 100
+      },
+      "leakage_suspected": false,
+      "detailed_metrics": {
+        "accuracy": 0.869565,
+        "precision": 0.897959,
+        "recall": 0.862745,
+        "f1": 0.88,
+        "confusion_matrix": [
+          [
+            72,
+            10
+          ],
+          [
+            14,
+            88
+          ]
+        ],
+        "roc_auc": 0.907819,
+        "pr_auc": 0.89615,
+        "log_loss": 0.361967,
+        "brier_score": 0.100317
+      },
+      "_fitted_estimator": "GradientBoostingClassifier(random_state=42)",
+      "is_best": false
+    },
+    {
+      "model_name": "XGBoost",
+      "cv_score": 0.8713841739701046,
+      "test_score": 0.8534838175692742,
+      "cv_display_score": 0.871384,
+      "test_display_score": 0.853484,
+      "training_time": 72.11804010000014,
+      "fold_variance": 0.0005251804711993704,
+      "status": "ok",
+      "best_params": {
+        "subsample": 0.8,
+        "n_estimators": 500,
+        "min_child_weight": 3,
+        "max_depth": 4,
+        "learning_rate": 0.03,
+        "colsample_bytree": 1.0
+      },
+      "leakage_suspected": false,
+      "detailed_metrics": {
+        "accuracy": 0.853261,
+        "precision": 0.878788,
+        "recall": 0.852941,
+        "f1": 0.865672,
+        "confusion_matrix": [
+          [
+            70,
+            12
+          ],
+          [
+            15,
+            87
+          ]
+        ],
+        "roc_auc": 0.917145,
+        "pr_auc": 0.922414,
+        "log_loss": 0.376941,
+        "brier_score": 0.10656
+      },
+      "_fitted_estimator": "XGBClassifier(base_score=None, booster=None, callbacks=None,\n              colsample_bylevel=None, colsample_bynode=None,\n              colsample_bytree=1.0, device='cuda', early_stopping_rounds=None,\n              enable_categorical=False, eval_metric='logloss',\n              feature_types=None, gamma=None, grow_policy=None,\n              importance_type=None, interaction_constraints=None,\n              learning_rate=0.03, max_bin=None, max_cat_threshold=None,\n              max_cat_to_onehot=None, max_delta_step=None, max_depth=4,\n              max_leaves=None, min_child_weight=3, missing=nan,\n              monotone_constraints=None, multi_strategy=None, n_estimators=500,\n              n_jobs=6, num_parallel_tree=None, random_state=42, ...)",
+      "is_best": false
+    },
+    {
+      "model_name": "LightGBM",
+      "cv_score": 0.869936279344157,
+      "test_score": 0.8644334355078713,
+      "cv_display_score": 0.869936,
+      "test_display_score": 0.864433,
+      "training_time": 16.292581800000335,
+      "fold_variance": 0.0006453825521711086,
+      "status": "ok",
+      "best_params": {
+        "subsample": 0.8,
+        "num_leaves": 127,
+        "n_estimators": 300,
+        "min_child_samples": 30,
+        "learning_rate": 0.03,
+        "colsample_bytree": 1.0
+      },
+      "leakage_suspected": false,
+      "detailed_metrics": {
+        "accuracy": 0.86413,
+        "precision": 0.896907,
+        "recall": 0.852941,
+        "f1": 0.874372,
+        "confusion_matrix": [
+          [
+            72,
+            10
+          ],
+          [
+            15,
+            87
+          ]
+        ],
+        "roc_auc": 0.907461,
+        "pr_auc": 0.898816,
+        "log_loss": 0.413292,
+        "brier_score": 0.108954
+      },
+      "_fitted_estimator": "LGBMClassifier(learning_rate=0.03, min_child_samples=30, n_estimators=300,\n               n_jobs=6, num_leaves=127, random_state=42, subsample=0.8,\n               verbosity=-1)",
+      "is_best": false
+    },
+    {
+      "model_name": "CatBoost",
+      "cv_score": 0.8686884493008113,
+      "test_score": 0.8914210436234823,
+      "cv_display_score": 0.868688,
+      "test_display_score": 0.891421,
+      "training_time": 464.6286099000008,
+      "fold_variance": 0.0005009141919077506,
+      "status": "ok",
+      "best_params": {
+        "depth": 4,
+        "iterations": 500,
+        "l2_leaf_reg": 3,
+        "learning_rate": 0.03,
+        "subsample": 1.0
+      },
+      "leakage_suspected": false,
+      "detailed_metrics": {
+        "accuracy": 0.891304,
+        "precision": 0.91,
+        "recall": 0.892157,
+        "f1": 0.90099,
+        "confusion_matrix": [
+          [
+            73,
+            9
+          ],
+          [
+            11,
+            91
+          ]
+        ],
+        "roc_auc": 0.91846,
+        "pr_auc": 0.920554,
+        "log_loss": 0.355073,
+        "brier_score": 0.097616
+      },
+      "_fitted_estimator": "CatBoostClassifier(depth=4, iterations=500, l2_leaf_reg=3, learning_rate=0.03, random_seed=42, subsample=1.0, thread_count=6, verbose=0)",
+      "is_best": true
+    },
+    {
+      "model_name": "HistGradientBoosting",
+      "cv_score": 0.8654813630726746,
+      "test_score": 0.8640450461586504,
+      "cv_display_score": 0.865481,
+      "test_display_score": 0.864045,
+      "training_time": 10.897003699999914,
+      "fold_variance": 0.0013729915207019035,
+      "status": "ok",
+      "best_params": {
+        "learning_rate": 0.03,
+        "max_depth": null,
+        "max_leaf_nodes": 15
+      },
+      "leakage_suspected": false,
+      "detailed_metrics": {
+        "accuracy": 0.86413,
+        "precision": 0.873786,
+        "recall": 0.882353,
+        "f1": 0.878049,
+        "confusion_matrix": [
+          [
+            69,
+            13
+          ],
+          [
+            12,
+            90
+          ]
+        ],
+        "roc_auc": 0.906624,
+        "pr_auc": 0.900989,
+        "log_loss": 0.360315,
+        "brier_score": 0.10463
+      },
+      "_fitted_estimator": "HistGradientBoostingClassifier(learning_rate=0.03, max_leaf_nodes=15,\n                               random_state=42)",
+      "is_best": false
+    },
+    {
+      "model_name": "AutoGluon",
+      "cv_score": null,
+      "test_score": 0.885218,
+      "training_time": 80.4,
+      "fold_variance": null,
+      "status": "ok",
+      "detailed_metrics": {
+        "accuracy": 0.88587,
+        "precision": 0.87156,
+        "recall": 0.931373,
+        "f1": 0.900474,
+        "confusion_matrix": [
+          [
+            68,
+            14
+          ],
+          [
+            7,
+            95
+          ]
+        ],
+        "roc_auc": 0.920851,
+        "pr_auc": 0.90575,
+        "log_loss": 0.348448,
+        "brier_score": 0.099283
+      },
+      "source": "automl_framework",
+      "is_best": false,
+      "cv_display_score": null,
+      "test_display_score": 0.885218
+    },
+    {
+      "model_name": "FLAML",
+      "cv_score": null,
+      "test_score": 0.896674,
+      "training_time": 60.33,
+      "fold_variance": null,
+      "status": "ok",
+      "detailed_metrics": {
+        "accuracy": 0.896739,
+        "precision": 0.902913,
+        "recall": 0.911765,
+        "f1": 0.907317,
+        "confusion_matrix": [
+          [
+            72,
+            10
+          ],
+          [
+            9,
+            93
+          ]
+        ],
+        "roc_auc": 0.919237,
+        "pr_auc": 0.913369,
+        "log_loss": 0.32757,
+        "brier_score": 0.091188
+      },
+      "source": "automl_framework",
+      "best_params": {
+        "best_estimator": "lgbm"
+      },
+      "is_best": false,
+      "cv_display_score": null,
+      "test_display_score": 0.896674
+    }
+  ],
+  "task_config": {
+    "goal": "I have patient records from a cardiology clinic. Predict which patients are at risk of heart disease. Prioritise catching every real case, even at the cost of false alarms.",
+    "target_column": "target",
+    "task_type": "classification",
+    "constraints": "",
+    "metric": "f1_weighted",
+    "best_model": "CatBoost"
+  },
+  "initial_dataset_profile": {
+    "n_rows": 918,
+    "n_columns": 12,
+    "columns": {
+      "Age": {
+        "dtype": "int64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 50,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 53.510893,
+        "median": 54.0,
+        "std": 9.432617,
+        "min": 28.0,
+        "max": 77.0,
+        "skew": -0.195933,
+        "kurtosis": -0.38614,
+        "q1": 47.0,
+        "q3": 60.0,
+        "iqr": 13.0,
+        "outlier_count_iqr": 0
+      },
+      "Sex": {
+        "dtype": "object",
+        "inferred_dtype": "categorical",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 2,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "skew": null,
+        "value_counts": {
+          "M": {
+            "count": 725,
+            "pct": 78.98
+          },
+          "F": {
+            "count": 193,
+            "pct": 21.02
+          }
+        }
+      },
+      "ChestPainType": {
+        "dtype": "object",
+        "inferred_dtype": "categorical",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 4,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "skew": null,
+        "value_counts": {
+          "ASY": {
+            "count": 496,
+            "pct": 54.03
+          },
+          "NAP": {
+            "count": 203,
+            "pct": 22.11
+          },
+          "ATA": {
+            "count": 173,
+            "pct": 18.85
+          },
+          "TA": {
+            "count": 46,
+            "pct": 5.01
+          }
+        }
+      },
+      "RestingBP": {
+        "dtype": "int64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 67,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 132.396514,
+        "median": 130.0,
+        "std": 18.514154,
+        "min": 0.0,
+        "max": 200.0,
+        "skew": 0.179839,
+        "kurtosis": 3.271251,
+        "q1": 120.0,
+        "q3": 140.0,
+        "iqr": 20.0,
+        "outlier_count_iqr": 28
+      },
+      "Cholesterol": {
+        "dtype": "int64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 222,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 198.799564,
+        "median": 223.0,
+        "std": 109.384145,
+        "min": 0.0,
+        "max": 603.0,
+        "skew": -0.610086,
+        "kurtosis": 0.118208,
+        "q1": 173.25,
+        "q3": 267.0,
+        "iqr": 93.75,
+        "outlier_count_iqr": 183
+      },
+      "FastingBS": {
+        "dtype": "int64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 2,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 0.233115,
+        "median": 0.0,
+        "std": 0.423046,
+        "min": 0.0,
+        "max": 1.0,
+        "skew": 1.264484,
+        "kurtosis": -0.40196,
+        "q1": 0.0,
+        "q3": 0.0,
+        "iqr": 0.0,
+        "outlier_count_iqr": 214
+      },
+      "RestingECG": {
+        "dtype": "object",
+        "inferred_dtype": "categorical",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 3,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "skew": null,
+        "value_counts": {
+          "Normal": {
+            "count": 552,
+            "pct": 60.13
+          },
+          "LVH": {
+            "count": 188,
+            "pct": 20.48
+          },
+          "ST": {
+            "count": 178,
+            "pct": 19.39
+          }
+        }
+      },
+      "MaxHR": {
+        "dtype": "int64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 119,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 136.809368,
+        "median": 138.0,
+        "std": 25.460334,
+        "min": 60.0,
+        "max": 202.0,
+        "skew": -0.144359,
+        "kurtosis": -0.448248,
+        "q1": 120.0,
+        "q3": 156.0,
+        "iqr": 36.0,
+        "outlier_count_iqr": 2
+      },
+      "ExerciseAngina": {
+        "dtype": "object",
+        "inferred_dtype": "categorical",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 2,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "skew": null,
+        "value_counts": {
+          "N": {
+            "count": 547,
+            "pct": 59.59
+          },
+          "Y": {
+            "count": 371,
+            "pct": 40.41
+          }
+        }
+      },
+      "Oldpeak": {
+        "dtype": "float64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 53,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 0.887364,
+        "median": 0.6,
+        "std": 1.06657,
+        "min": -2.6,
+        "max": 6.2,
+        "skew": 1.022872,
+        "kurtosis": 1.203064,
+        "q1": 0.0,
+        "q3": 1.5,
+        "iqr": 1.5,
+        "outlier_count_iqr": 16
+      },
+      "ST_Slope": {
+        "dtype": "object",
+        "inferred_dtype": "categorical",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 3,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "skew": null,
+        "value_counts": {
+          "Flat": {
+            "count": 460,
+            "pct": 50.11
+          },
+          "Up": {
+            "count": 395,
+            "pct": 43.03
+          },
+          "Down": {
+            "count": 63,
+            "pct": 6.86
+          }
+        }
+      },
+      "target": {
+        "dtype": "int64",
+        "inferred_dtype": "numeric",
+        "null_count": 0,
+        "null_pct": 0.0,
+        "nunique": 2,
+        "fully_null": false,
+        "cardinality_equals_row_count": false,
+        "mean": 0.553377,
+        "median": 1.0,
+        "std": 0.497414,
+        "min": 0.0,
+        "max": 1.0,
+        "skew": -0.215086,
+        "kurtosis": -1.958008,
+        "q1": 0.0,
+        "q3": 1.0,
+        "iqr": 1.0,
+        "outlier_count_iqr": 0
+      }
+    },
+    "target_distribution": {
+      "counts": {
+        "1": 508,
+        "0": 410
+      },
+      "nunique": 2,
+      "imbalance_ratio": 1.239
+    },
+    "stub": false,
+    "full_stats_columns": 12,
+    "difficulty": {
+      "overall": 0.0257,
+      "label": "easy",
+      "components": {
+        "null_rate": 0.0,
+        "skew": 0.1038,
+        "imbalance": 0.0126,
+        "dimensionality": 0.012,
+        "cardinality": 0.0
+      }
+    }
+  },
+  "eda_results": {
+    "distribution_shapes": {
+      "Age": "approx_normal",
+      "RestingBP": "right_skewed",
+      "Cholesterol": "left_skewed",
+      "FastingBS": "right_skewed",
+      "MaxHR": "approx_normal",
+      "Oldpeak": "right_skewed",
+      "target": "uniform"
+    },
+    "correlation_matrix": {
+      "Age": {
+        "Age": 1.0,
+        "RestingBP": 0.2587790122420985,
+        "Cholesterol": -0.10159858546062715,
+        "FastingBS": 0.19985466336856814,
+        "MaxHR": -0.3983381028521014,
+        "Oldpeak": 0.22648347695160112,
+        "target": 0.2446892745790995
+      },
+      "RestingBP": {
+        "Age": 0.2587790122420985,
+        "RestingBP": 1.0,
+        "Cholesterol": 0.08131052378076961,
+        "FastingBS": 0.07485528815235244,
+        "MaxHR": -0.12069809653623444,
+        "Oldpeak": 0.1518360628704197,
+        "target": 0.10205463312693705
+      },
+      "Cholesterol": {
+        "Age": -0.10159858546062715,
+        "RestingBP": 0.08131052378076961,
+        "Cholesterol": 1.0,
+        "FastingBS": -0.28742345006675113,
+        "MaxHR": 0.26216392397912297,
+        "Oldpeak": 0.09172384563850859,
+        "target": -0.24141288796833776
+      },
+      "FastingBS": {
+        "Age": 0.19985466336856814,
+        "RestingBP": 0.07485528815235244,
+        "Cholesterol": -0.28742345006675113,
+        "FastingBS": 1.0,
+        "MaxHR": -0.14602457748353256,
+        "Oldpeak": 0.047464159854632086,
+        "target": 0.261391398893737
+      },
+      "MaxHR": {
+        "Age": -0.3983381028521014,
+        "RestingBP": -0.12069809653623444,
+        "Cholesterol": 0.26216392397912297,
+        "FastingBS": -0.14602457748353256,
+        "MaxHR": 1.0,
+        "Oldpeak": -0.14568227009229395,
+        "target": -0.4072267967277658
+      },
+      "Oldpeak": {
+        "Age": 0.22648347695160112,
+        "RestingBP": 0.1518360628704197,
+        "Cholesterol": 0.09172384563850859,
+        "FastingBS": 0.047464159854632086,
+        "MaxHR": -0.14568227009229395,
+        "Oldpeak": 1.0,
+        "target": 0.3766029155159321
+      },
+      "target": {
+        "Age": 0.2446892745790995,
+        "RestingBP": 0.10205463312693705,
+        "Cholesterol": -0.24141288796833776,
+        "FastingBS": 0.261391398893737,
+        "MaxHR": -0.4072267967277658,
+        "Oldpeak": 0.3766029155159321,
+        "target": 1.0
+      }
+    },
+    "outlier_flags": {
+      "Age": {
+        "iqr_outlier_count": 0,
+        "zscore_gt3_count": 0
+      },
+      "RestingBP": {
+        "iqr_outlier_count": 20,
+        "zscore_gt3_count": 6
+      },
+      "Cholesterol": {
+        "iqr_outlier_count": 140,
+        "zscore_gt3_count": 3
+      },
+      "FastingBS": {
+        "iqr_outlier_count": 168,
+        "zscore_gt3_count": 0
+      },
+      "MaxHR": {
+        "iqr_outlier_count": 2,
+        "zscore_gt3_count": 0
+      },
+      "Oldpeak": {
+        "iqr_outlier_count": 13,
+        "zscore_gt3_count": 6
+      },
+      "target": {
+        "iqr_outlier_count": 0,
+        "zscore_gt3_count": 0
+      }
+    },
+    "missing_patterns": {
+      "Age": 0.0,
+      "Sex": 0.0,
+      "ChestPainType": 0.0,
+      "RestingBP": 0.0,
+      "Cholesterol": 0.0,
+      "FastingBS": 0.0,
+      "RestingECG": 0.0,
+      "MaxHR": 0.0,
+      "ExerciseAngina": 0.0,
+      "Oldpeak": 0.0,
+      "ST_Slope": 0.0,
+      "target": 0.0
+    },
+    "target_correlations": {
+      "Age": 0.24468927457909864,
+      "RestingBP": 0.10205463312693695,
+      "Cholesterol": -0.24141288796833746,
+      "FastingBS": 0.2613913988937376,
+      "MaxHR": -0.40722679672776513,
+      "Oldpeak": 0.37660291551593117
+    },
+    "target_imbalance": {
+      "severity": "low",
+      "top_class_share": 0.553133514986376,
+      "minority_pct": 44.69,
+      "n_classes": 2
+    },
+    "target_column": "target",
+    "eda_sampled": false,
+    "eda_n_rows_used": 734,
+    "near_redundant_pairs": [],
+    "all_near_zero_target_corr": false,
+    "few_features": false
+  },
+  "report_audit": {
+    "missing_sections": [],
+    "hedges": [],
+    "unsupported_caveats": [],
+    "directional_claims": [],
+    "unnamed_top_models": [],
+    "unexplained_conflict": [
+      "FastingBS"
+    ],
+    "truncated_feature_names": [],
+    "missing_baseline": []
+  }
+}

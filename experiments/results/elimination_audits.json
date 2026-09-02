@@ -1,0 +1,165 @@
+[
+  {
+    "eliminated_family": "GradientBoosting",
+    "eliminated_subsample_score": 0.7865,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 7,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.9076,
+    "all_subsample_scores": {
+      "RandomForest": 0.821,
+      "GradientBoosting": 0.7865,
+      "LightGBM": 0.8075,
+      "XGBoost": 0.8208,
+      "LogisticRegression": 0.8149,
+      "HistGradientBoosting": 0.7945,
+      "CatBoost": 0.8083
+    },
+    "dataset": "heart"
+  },
+  {
+    "eliminated_family": "RandomForest",
+    "eliminated_subsample_score": 0.7781,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.7992,
+    "all_subsample_scores": {
+      "RandomForest": 0.7781,
+      "GradientBoosting": 0.799,
+      "XGBoost": 0.7816,
+      "LightGBM": 0.7837,
+      "CatBoost": 0.7989,
+      "HistGradientBoosting": 0.7868
+    },
+    "dataset": "churn"
+  },
+  {
+    "eliminated_family": "HistGradientBoosting",
+    "eliminated_subsample_score": 0.8335,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.8699,
+    "all_subsample_scores": {
+      "RandomForest": 0.8346,
+      "GradientBoosting": 0.8446,
+      "XGBoost": 0.8356,
+      "LightGBM": 0.8398,
+      "CatBoost": 0.8515,
+      "HistGradientBoosting": 0.8335
+    },
+    "dataset": "bank"
+  },
+  {
+    "eliminated_family": "GradientBoosting",
+    "eliminated_subsample_score": 0.9968,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.9995,
+    "all_subsample_scores": {
+      "LightGBM": 0.9993,
+      "XGBoost": 0.9989,
+      "RandomForest": 0.9996,
+      "CatBoost": 0.999,
+      "GradientBoosting": 0.9968,
+      "HistGradientBoosting": 0.999
+    },
+    "dataset": "creditcard_fraud"
+  },
+  {
+    "eliminated_family": "XGBoost",
+    "eliminated_subsample_score": 0.8595,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.9,
+    "all_subsample_scores": {
+      "LightGBM": 0.8762,
+      "XGBoost": 0.8595,
+      "RandomForest": 0.8629,
+      "GradientBoosting": 0.8674,
+      "HistGradientBoosting": 0.876,
+      "CatBoost": 0.8895
+    },
+    "dataset": "house_prices"
+  },
+  {
+    "eliminated_family": "XGBoost",
+    "eliminated_subsample_score": 0.6921,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.9002,
+    "all_subsample_scores": {
+      "RandomForest": 0.715,
+      "GradientBoosting": 0.713,
+      "XGBoost": 0.6921,
+      "LightGBM": 0.7188,
+      "CatBoost": 0.7048,
+      "HistGradientBoosting": 0.7216
+    },
+    "dataset": "insurance"
+  },
+  {
+    "eliminated_family": "GradientBoosting",
+    "eliminated_subsample_score": 0.9819,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.9818,
+    "all_subsample_scores": {
+      "LightGBM": 0.9867,
+      "XGBoost": 0.9849,
+      "RandomForest": 0.984,
+      "GradientBoosting": 0.9819,
+      "HistGradientBoosting": 0.9868,
+      "CatBoost": 0.9871
+    },
+    "dataset": "diamonds"
+  },
+  {
+    "eliminated_family": "GradientBoosting",
+    "eliminated_subsample_score": 0.8937,
+    "subsample_rank_of_eliminated": 2,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": false,
+    "elimination_correct": false,
+    "best_survivor_test_score": 0.9714,
+    "all_subsample_scores": {
+      "LightGBM": 0.9005,
+      "XGBoost": 0.8881,
+      "RandomForest": 0.8997,
+      "GradientBoosting": 0.8937,
+      "HistGradientBoosting": 0.8981,
+      "CatBoost": 0.9058
+    },
+    "dataset": "life_expectancy"
+  },
+  {
+    "eliminated_family": "XGBoost",
+    "eliminated_subsample_score": 0.1684,
+    "subsample_rank_of_eliminated": 1,
+    "total_candidates": 6,
+    "was_worst_subsample_scorer": true,
+    "elimination_correct": true,
+    "best_survivor_test_score": 0.4705,
+    "all_subsample_scores": {
+      "RandomForest": 0.2702,
+      "GradientBoosting": 0.1958,
+      "XGBoost": 0.1684,
+      "LightGBM": 0.2693,
+      "CatBoost": 0.2424,
+      "HistGradientBoosting": 0.2522
+    },
+    "dataset": "wine"
+  }
+]

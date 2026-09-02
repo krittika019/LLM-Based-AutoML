@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from automl_system import config
 from automl_system.llm.client import LLMClient
 from automl_system.memory import episodic
 from automl_system.state.session import SessionState
@@ -110,14 +111,13 @@ def _coerce_types(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
 def _resolve_ambiguous_with_llm(
     session: SessionState, ambiguous: list[dict[str, Any]]
-) -> str:
+) -> tuple[str, list[dict[str, Any]]]:
     """
-    Ask LLM to decide each ambiguous case; returns summary string.
-    Attempts structured JSON response; falls back to line-by-line text.
-    Each decision is individually logged with: ambiguity / decision / reasoning.
+    Ask LLM to decide each ambiguous case.
+    Returns (summary_string, decisions_list) so the caller can apply the decisions.
     """
     if not ambiguous:
-        return "no_ambiguous_cases"
+        return "no_ambiguous_cases", []
 
     client = LLMClient()
     prompt = f"""You are reviewing ambiguous data-quality findings in a dataset.
@@ -128,7 +128,7 @@ Return a JSON array only:
 
 FINDINGS: {ambiguous[:20]}"""
 
-    raw = client.call(prompt)
+    raw = client.call(prompt, max_tokens=config.LLM_MAX_TOKENS_JSON, json_mode=True)
     decisions: list[dict[str, Any]] = []
     if raw:
         try:
@@ -138,9 +138,11 @@ FINDINGS: {ambiguous[:20]}"""
         except Exception:
             pass
 
-    # Log each decision individually
-    for i, amb in enumerate(ambiguous):
-        dec_entry = decisions[i] if i < len(decisions) else {}
+    # Log each decision individually — matched by (column, kind), not position,
+    # since the LLM's returned array can omit/reorder entries relative to the
+    # findings it was given.
+    for amb in ambiguous:
+        dec_entry = _match_decision(amb, decisions)
         _log(session, {
             "action": "ambiguous_cleaning_decision",
             "ambiguity": amb.get("kind"),
@@ -157,9 +159,75 @@ FINDINGS: {ambiguous[:20]}"""
             f"{d.get('column')} [{d.get('kind', d.get('decision'))}]: {d.get('decision')} — {d.get('reasoning', '')}"
             for d in decisions if isinstance(d, dict)
         ]
-        return "\n".join(lines)
+        return "\n".join(lines), decisions
 
-    return raw or "no_response"
+    return raw or "no_response", decisions
+
+
+def _match_decision(amb: dict[str, Any], decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Finds the LLM decision for a given finding by (column, kind) identity,
+    not list position — the LLM's returned array can omit, reorder, or add
+    entries relative to the findings it was given, so positional indexing can
+    silently apply the wrong decision to the wrong column."""
+    col, kind = amb.get("column"), amb.get("kind")
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        if d.get("column") == col and d.get("kind") == kind:
+            return d
+    for d in decisions:
+        if isinstance(d, dict) and d.get("column") == col:
+            return d
+    return {}
+
+
+def _apply_llm_decisions(
+    out: pd.DataFrame,
+    ambiguous: list[dict[str, Any]],
+    decisions: list[dict[str, Any]],
+) -> pd.DataFrame:
+    """Apply DROP_ROWS / SET_NULL decisions returned by the LLM to the DataFrame."""
+    now_utc = datetime.now(timezone.utc)
+    drop_mask = pd.Series(False, index=out.index)
+
+    for amb in ambiguous:
+        dec_entry = _match_decision(amb, decisions)
+        action = str(dec_entry.get("decision", "KEEP")).upper()
+        if action == "KEEP":
+            continue
+
+        col = amb.get("column")
+        kind = amb.get("kind")
+        if not col or col not in out.columns:
+            continue
+
+        s = out[col]
+        if kind == "negative_age":
+            mask = (s < 0) & s.notna()
+        elif kind == "percent_over_100":
+            mask = (s > 100) & s.notna()
+        elif kind == "suspicious_age_over_120":
+            mask = (s > 120) & s.notna()
+        elif kind == "future_date" and pd.api.types.is_datetime64_any_dtype(s):
+            try:
+                mask = s.notna() & (
+                    s.dt.tz_localize("UTC") > now_utc if s.dt.tz is None else s > now_utc
+                )
+            except Exception:
+                mask = pd.Series(False, index=out.index)
+        else:
+            mask = pd.Series(False, index=out.index)
+
+        if action == "DROP_ROWS":
+            drop_mask = drop_mask | mask
+        elif action == "SET_NULL":
+            out = out.copy()
+            out.loc[mask, col] = np.nan
+
+    if drop_mask.any():
+        out = out[~drop_mask].reset_index(drop=True)
+
+    return out
 
 
 def basic_clean(df: pd.DataFrame, session: SessionState) -> pd.DataFrame:
@@ -244,8 +312,15 @@ def basic_clean(df: pd.DataFrame, session: SessionState) -> pd.DataFrame:
 
     # ── Step 6: LLM for ambiguous cases (skipped if empty) ───────────────────
     if ambiguous:
-        guidance = _resolve_ambiguous_with_llm(session, ambiguous)
+        guidance, llm_decisions = _resolve_ambiguous_with_llm(session, ambiguous)
         report["ambiguous_llm_guidance"] = guidance
+        # Apply the LLM's DROP_ROWS / SET_NULL decisions to the DataFrame
+        rows_before = len(out)
+        out = _apply_llm_decisions(out, ambiguous, llm_decisions)
+        rows_removed = rows_before - len(out)
+        if rows_removed:
+            _log(session, {"action": "llm_decisions_applied",
+                           "rows_removed": rows_removed})
     else:
         report["ambiguous_llm_guidance"] = "no_ambiguous_cases"
         _log(session, {"action": "llm_skipped", "reason": "no ambiguous cases found"})

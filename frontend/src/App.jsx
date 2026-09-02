@@ -24,6 +24,60 @@ const PHASE_COLORS = {
 
 export { PHASE_COLORS }
 
+// ── Token Cost Table ──────────────────────────────────────────────────────────
+const PHASE_LABELS = {
+  planning: 'Phase 2 — Planning',
+  eda: 'Phase 3 — EDA',
+  feature_selection: 'Phase 3 — Feature Selection',
+  deep_cleaning: 'Phase 3 — Deep Cleaning',
+  feature_engineering: 'Phase 3 — Feature Engineering',
+  execution_planning: 'Phase 4 — Execution Planning',
+  model_training: 'Phase 5 — Model Training',
+  report_generation: 'Phase 7 — Report',
+}
+
+function TokenCostTable({ data }) {
+  if (!data) return null
+  const total = data._total ?? 0
+  const cacheHits = data._cache_hits ?? 0
+  const rows = Object.entries(data)
+    .filter(([k]) => !k.startsWith('_'))
+    .sort((a, b) => b[1] - a[1])
+
+  return (
+    <div className="token-cost-wrap">
+      <div className="token-cost-title">LLM Call Budget</div>
+      <div className="token-cost-summary">
+        <span><strong>{total}</strong> total calls</span>
+        <span className="token-cost-sep">·</span>
+        <span><strong>{cacheHits}</strong> cache hits saved</span>
+      </div>
+      <table className="token-cost-table">
+        <thead>
+          <tr><th>Phase</th><th>LLM Calls</th><th>Share</th></tr>
+        </thead>
+        <tbody>
+          {rows.map(([phase, count]) => {
+            const pct = total > 0 ? Math.round(count / total * 100) : 0
+            return (
+              <tr key={phase}>
+                <td>{PHASE_LABELS[phase] ?? phase}</td>
+                <td style={{ textAlign: 'right', fontWeight: 600 }}>{count}</td>
+                <td>
+                  <div className="token-bar-wrap">
+                    <div className="token-bar" style={{ width: `${pct}%` }} />
+                    <span className="token-bar-pct">{pct}%</span>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 const TOTAL_PHASES = 7
 const PHASE_STUB_NAMES = [
   'Initialization',
@@ -79,6 +133,7 @@ export default function App() {
   const [reportAvailable, setReportAvail] = useState(false)
   const [runError, setRunError] = useState('')
   const [pipelineDone, setPipelineDone] = useState(false)
+  const [tokenCost, setTokenCost] = useState(null)
   const [pipelineStarted, setPipelineStarted] = useState(false)
   const [submittedInstruction, setSubmittedInstruction] = useState('')
   const [chatHistory, setChatHistory] = useState([])
@@ -194,6 +249,10 @@ export default function App() {
           }
           return updated
         })
+        break
+
+      case 'token_cost':
+        setTokenCost(event.data)
         break
 
       case 'final':
@@ -521,6 +580,9 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* Token cost table — shown after pipeline completes */}
+              {pipelineDone && tokenCost && <TokenCostTable data={tokenCost} />}
 
               {/* Inline pipeline script — always visible after completion */}
               <InlineScript runId={runId} visible={pipelineDone && scriptAvailable} />

@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from automl_system import config
 from automl_system.llm.client import LLMClient
 from automl_system.memory import episodic
 from automl_system.state.session import SessionState
@@ -16,7 +17,6 @@ from automl_system.utils.llm_json import extract_json_object
 
 logger = logging.getLogger(__name__)
 
-_CORR_FLAG_THRESHOLD = 0.95
 _VARIANCE_DOMINANCE_THRESHOLD = 0.98   # flag when top-value share >= 98%
 _ID_NAME_TOKENS = ("id", "index", "key", "uuid", "guid", "rowid", "row_id")
 
@@ -54,9 +54,22 @@ def _code_flag_candidates(df: pd.DataFrame, target: str | None) -> dict[str, Any
             continue
         nu = df[c].nunique(dropna=True)
         name_l = str(c).lower()
-        by_card = (n > 0 and nu >= n)
+        is_float_col = df[c].dtype.kind == "f"
+        # Cardinality flag: only applies to non-float columns.
+        # Continuous floats (measurements, sensor readings) having unique values per row
+        # is expected — flagging them as IDs would cause mass-dropping of real features.
+        by_card = (not is_float_col) and (n > 0 and nu >= n)
         by_name = any(tok == name_l or name_l.startswith(tok + "_") or name_l.endswith("_" + tok)
                       for tok in _ID_NAME_TOKENS)
+        if not by_card and not by_name and pd.api.types.is_numeric_dtype(df[c]) and not is_float_col:
+            # Detect sequential integer IDs (e.g. 1,2,3…N) — cardinality may be < n if gaps exist
+            vals = df[c].dropna()
+            if len(vals) > 10 and vals.dtype.kind in ("i", "u"):
+                sorted_vals = vals.sort_values().reset_index(drop=True)
+                diffs = sorted_vals.diff().dropna()
+                if diffs.nunique() == 1 and float(diffs.iloc[0]) > 0:
+                    by_card = True  # treat uniform-step integer as sequential ID
+
         if by_card or by_name:
             id_like.append({
                 "column": c,
@@ -77,7 +90,9 @@ def _code_flag_candidates(df: pd.DataFrame, target: str | None) -> dict[str, Any
                     if a not in cm.index or b not in cm.columns:
                         continue
                     r = abs(float(cm.loc[a, b]))
-                    if r > _CORR_FLAG_THRESHOLD:
+                    # Use 0.97 for feature-feature correlation (conservative: only drop near-duplicates).
+                    # config.LEAKAGE_CORR_THRESHOLD (0.95) is reserved for target-feature leakage detection.
+                    if r > 0.97:
                         key = tuple(sorted((a, b)))
                         if key in seen:
                             continue
@@ -147,23 +162,38 @@ def select_features(df: pd.DataFrame, session: SessionState) -> pd.DataFrame:
 
     client = LLMClient()
     feature_cols = [c for c in df.columns if c != target_s]
+
+    # Columns the preprocessing plan has marked for encoding — never drop these
+    plan_enc = session.preprocessing_plan or {}
+    encoding_candidates = [
+        e["column"] for e in (plan_enc.get("encoding_candidates") or [])
+        if isinstance(e, dict) and e.get("column")
+    ]
+
     revision_ctx = (session.preprocessing_meta or {}).get("targeted_revision_context", "")
     revision_block = f"\n\nTARGETED_REVISION_INSTRUCTION: {revision_ctx}" if revision_ctx else ""
+    enc_block = (
+        f"\nPROTECTED_ENCODING_CANDIDATES (do NOT drop — these will be one-hot/ordinal encoded): {encoding_candidates}"
+        if encoding_candidates else ""
+    )
     prompt = f"""Phase 3 Step 3 — Feature Selection.{revision_block}
 
 TASK: {task}
 EDA_NARRATIVE (truncated): {(session.eda_narrative or '')[:2500]}
 
 ALL_FEATURE_COLUMNS: {feature_cols[:80]}
+{enc_block}
 
 FLAGGED_COLUMNS (code found these — decide drop or keep for each):
 {all_flags[:60]}
 
 For each flagged column, decide: DROP or KEEP. Provide one-sentence rationale.
-Also list any unflagged columns you think should be dropped (domain reasoning, e.g. name fields, free text, obvious non-predictors).
+Also list any unflagged columns you think should be dropped (ONLY obvious non-predictors: free-text fields, name strings, row IDs — NOT binary yes/no or low-cardinality categoricals).
 
 IMPORTANT:
 - Never drop the target column: {target_s!r}
+- Never drop columns listed in PROTECTED_ENCODING_CANDIDATES
+- Binary yes/no or low-cardinality categorical columns are almost always useful — keep them
 - For high_correlation pairs, drop at most ONE column per pair
 - You MAY keep a code-flagged identifier if it carries genuine signal — explain why
 
@@ -173,17 +203,22 @@ Return JSON only:
   "additional_drops": [{{"column": "...", "rationale": "one sentence"}}]
 }}"""
 
-    raw = client.call(prompt)
+    raw = client.call(prompt, max_tokens=config.LLM_MAX_TOKENS_JSON, json_mode=True)
     parsed = extract_json_object(raw) if raw else None
 
     drop_cols: list[str] = []
     log_entries: list[dict[str, Any]] = []
     seen: set[str] = set()
 
+    protected: set[str] = set(encoding_candidates)
+
     def _record_drop(col: str, rationale: str, tier: str) -> None:
         if col in seen or col not in df.columns:
             return
         if target_s and col == target_s:
+            return
+        if col in protected:
+            logger.info("select_features: blocked drop of protected encoding candidate %r", col)
             return
         seen.add(col)
         drop_cols.append(col)
@@ -191,6 +226,11 @@ Return JSON only:
         _log(session, {"action": "drop_feature", "column": col, "rationale": rationale, "tier": tier})
 
     if parsed:
+        # Only honour flagged_decisions for columns the code actually flagged.
+        # Without this guard, the LLM hallucinates drops for non-flagged numeric
+        # features (e.g. all-numeric datasets like wine where code flags nothing).
+        code_flagged_cols: set[str] = {f["column"] for f in all_flags}
+
         flagged_decisions = parsed.get("flagged_decisions") or []
         for d in flagged_decisions:
             if not isinstance(d, dict):
@@ -199,6 +239,14 @@ Return JSON only:
             decision = str(d.get("decision") or "keep").lower()
             rationale = str(d.get("rationale") or "LLM decision.")
             if not col:
+                continue
+
+            # Ignore decisions about columns that were never code-flagged
+            if col not in code_flagged_cols:
+                logger.debug(
+                    "select_features: ignoring flagged_decision for non-flagged column %r "
+                    "(LLM hallucinated a flag — only code-flagged columns are actionable)", col
+                )
                 continue
 
             # Log if LLM keeps a code-flagged identifier (override noted)
@@ -221,16 +269,34 @@ Return JSON only:
                 continue
             col = str(d.get("column") or "")
             rationale = str(d.get("rationale") or "LLM domain reasoning.")
-            if col:
-                _record_drop(col, rationale, "llm_domain")
+            if not col or col not in df.columns:
+                continue
+            # Only allow additional drops for non-numeric columns (string/object types).
+            # Numeric measurement features are already handled by code flags (variance,
+            # correlation). Letting the LLM drop numeric features here causes over-removal.
+            if pd.api.types.is_numeric_dtype(df[col]):
+                logger.info(
+                    "select_features: blocked LLM additional_drop of numeric column %r "
+                    "(use code flags for numeric feature filtering)", col
+                )
+                continue
+            _record_drop(col, rationale, "llm_domain")
     else:
-        # LLM unavailable — fall back to dropping all low-variance + identifier flag columns
-        logger.warning("select_features: LLM parse failed; applying fallback drops for low-variance+identifier")
+        # LLM unavailable — conservative fallback: only drop columns that are
+        # unambiguously non-predictive (near-constant OR string/object identifiers by name).
+        # Do NOT drop numeric columns by cardinality — continuous features with unique values
+        # are not identifiers, they are measurements.
+        logger.warning("select_features: LLM parse failed; applying conservative fallback")
         for f in flags["low_variance"]:
             _record_drop(f["column"], "Low variance fallback (LLM unavailable).", "fallback")
         for f in flags["identifier_like"]:
-            if f["reason"] == "cardinality_equals_row_count":
-                _record_drop(f["column"], "Identifier fallback (LLM unavailable).", "fallback")
+            col = f["column"]
+            # Only drop by name pattern if the column is non-numeric (string IDs)
+            if f["reason"] == "name_pattern" and not pd.api.types.is_numeric_dtype(df[col]):
+                _record_drop(col, "String identifier fallback (LLM unavailable).", "fallback")
+            # Drop integer columns with cardinality == n_rows (sequential row numbers)
+            elif f["reason"] == "cardinality_equals_row_count" and df[col].dtype.kind in ("i", "u"):
+                _record_drop(col, "Integer identifier fallback (LLM unavailable).", "fallback")
 
     # ── Scenario: LLM drops >50% of feature columns ───────────────────────────
     n_features = len(feature_cols)

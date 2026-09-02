@@ -32,6 +32,18 @@ def log_decision(
     session.local_decisions_log.append(dict(entry))
 
 
+def compact_decisions(entries: list[dict[str, Any]], limit: int = 20) -> list[dict[str, Any]]:
+    """Return the last `limit` decision entries as compact dicts for LLM prompts."""
+    out = []
+    for e in entries[-limit:]:
+        out.append({
+            "step": e.get("step") or e.get("phase"),
+            "action": e.get("action"),
+            "rationale": str(e.get("note") or e.get("rationale") or e.get("text") or "")[:200],
+        })
+    return out
+
+
 def merge_logs_for_report(session: SessionState) -> list[dict[str, Any]]:
     """Merge Mongo episodic log with local mirror (dedupe by timestamp+step+action)."""
     remote: list[dict[str, Any]] = []

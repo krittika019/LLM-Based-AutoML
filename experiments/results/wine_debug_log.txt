@@ -1,0 +1,94 @@
+	Warning: Exception caused LightGBM to fail during training... Skipping this model.
+		'NoneType' object is not iterable
+
+============================================================
+Dataset: wine (1599 rows × 11 features, regression)
+============================================================
+  Running single-model baselines...
+  RandomForest (default): test=0.5389  cv=0.4885  t=6.13s
+  Linear baseline: test=0.4032  cv=0.3425  t=2.27s
+  Running AutoGluon...
+  AutoGluon: test=0.5055  t=181.23s  status=ok
+  Running FLAML...
+  FLAML: test=0.4943  t=90.11s  status=ok
+  Running AutoML (ours)...
+    [Phase 1] target='quality'  task_type='regression'
+[EXECUTION] target_column='quality' | n_features=11 | train_shape=(1087, 11) | test_shape=(272, 11) | task_type=regression
+[EXECUTION] MI filter: removed 1 near-zero-MI feature(s): ['free sulfur dioxide']
+[GPU] CUDA confirmed — XGBoost GPU API: modern (device=cuda)
+[GPU] LightGBM GPU: confirmed
+[GPU] CatBoost GPU: confirmed
+[EXECUTION] HistGradientBoosting injected as guaranteed baseline (not in LLM plan)
+[EXECUTION] LLM HPO priors: ['RandomForest', 'GradientBoosting', 'XGBoost', 'LightGBM', 'CatBoost', 'HistGradientBoosting']
+[EXECUTION] Progressive evaluation: Round 1 subsample screening (6 candidates)
+[EXECUTION] Round 1 subsample | RandomForest: score=0.2641 (1.1s)
+[EXECUTION] Round 1 subsample | GradientBoosting: score=0.1714 (1.1s)
+[EXECUTION] Round 1 subsample | XGBoost: score=0.1596 (3.2s)
+[EXECUTION] Round 1 subsample | LightGBM: score=0.1973 (0.1s)
+[EXECUTION] Round 1 subsample | CatBoost: score=0.2291 (9.0s)
+[EXECUTION] Round 1 subsample | HistGradientBoosting: score=0.1960 (0.9s)
+[EXECUTION] Progressive evaluation: llm eliminated 'XGBoost' after Round 1 (gap=0.0118)
+[EXECUTION] Round 2 full training on 5 survivors: ['RandomForest', 'GradientBoosting', 'LightGBM', 'CatBoost', 'HistGradientBoosting']
+[EXECUTION] Training RandomForest...
+[EXECUTION] RandomForest GridSearchCV: 12 param sets × 5 folds = 60 fits (sequential)
+[EXECUTION] RandomForest GridSearchCV best CV score (primary metric): 0.339978
+[EXECUTION] RandomForest test_score=0.468672 display=0.468672 (metric=r2)
+[EXECUTION] Training GradientBoosting...
+[EXECUTION] GradientBoosting GridSearchCV: 12 param sets × 5 folds = 60 fits (sequential)
+[EXECUTION] GradientBoosting GridSearchCV best CV score (primary metric): 0.337246
+[EXECUTION] GradientBoosting test_score=0.435109 display=0.435109 (metric=r2)
+[EXECUTION] Training LightGBM...
+[EXECUTION] LightGBM GridSearchCV auto-fallback to RandomizedSearchCV (216 combos × 5 folds = 1080 fits > 500 cap). Sampling 20 configs instead.
+[EXECUTION] LightGBM RandomizedSearchCV best CV score: 0.318796
+[EXECUTION] LightGBM test_score=0.438084 display=0.438084 (metric=r2)
+[EXECUTION] Training CatBoost...
+[EXECUTION] CatBoost GridSearchCV: 72 param sets × 5 folds = 360 fits (sequential)
+[EXECUTION] CatBoost GridSearchCV best CV score (primary metric): 0.358144
+[EXECUTION] CatBoost test_score=0.487175 display=0.487175 (metric=r2)
+[EXECUTION] Training HistGradientBoosting...
+[EXECUTION] HistGradientBoosting GridSearchCV: 8 param sets × 5 folds = 40 fits (sequential)
+[EXECUTION] HistGradientBoosting GridSearchCV best CV score (primary metric): 0.338036
+	Warning: Exception caused LightGBMXT to fail during training... Skipping this model.
+		'NoneType' object is not iterable
+	Warning: Exception caused LightGBM to fail during training... Skipping this model.
+		'NoneType' object is not iterable
+	Warning: Exception caused LightGBMLarge to fail during training... Skipping this model.
+		'NoneType' object is not iterable
+LLM call failed (attempt 1/3) [groq]: Error code: 413 - {'error': {'message': 'Request too large for model `llama-3.1-8b-instant` in organization `org_01kn7t68w0f6zt5w373a12cpn2` service tier `on_demand` on tokens per minute (TPM): Limit 6000, Requested 6859, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}
+Prompt shrunk to 5568 chars after payload-too-large
+[EXECUTION] HistGradientBoosting test_score=0.447714 display=0.447714 (metric=r2)
+[EXECUTION] Stacking ensemble Stacking(CatBoost+RandomForest+HistGradientBoosting+GradientBoosting+Ridge): test=0.467162 vs best_single=0.487175 -- single model wins
+[EXECUTION] Voting ensemble Ensemble(CatBoost+RandomForest+HistGradientBoosting): test=0.474716 vs best=0.487175 -- no improvement
+[EXECUTION] Feature importances (feature_importances): top-5 = ['alcohol', 'sulphates', 'volatile acidity', 'total sulfur dioxide', 'pH']
+[EXECUTION] Elimination audit: XGBoost was rank 1/6 by subsample — elimination_correct=True
+[EXECUTION] AutoML benchmarks: time_limit=60s each
+[EXECUTION] AutoGluon benchmark: test_score=0.096915
+[EXECUTION] FLAML benchmark: test_score=0.460004
+  AutoML (ours): test=0.4872  model=CatBoost  t=1019.19s  llm_calls=12  llm_avoided=54.5%  smote=False  diversity_pruned=False  status=ok
+  [Elimination audit] eliminated=XGBoost  rank=1/6  strict_correct=True
+
+Results saved to F:\PBL_AutoML\experiments\results\result_wine.csv
+
+==========================================================================================
+BENCHMARK SUMMARY
+==========================================================================================
+dataset                 system  test_score     rmse      mae  time_s  llm_calls best_model
+   wine RandomForest (default)      0.5389 0.549000 0.422000    6.13          0          —
+   wine        Linear baseline      0.4032 0.624500 0.503600    2.27          0          —
+   wine              AutoGluon      0.5055 0.568500 0.447200  181.23          0          —
+   wine                  FLAML      0.4943 0.574900 0.459300   90.11          0          —
+   wine          AutoML (ours)      0.4872 0.602713 0.464649 1019.19         12   CatBoost
+
+=================================================================
+PROGRESSIVE ELIMINATION ACCURACY ANALYSIS
+=================================================================
+Datasets with elimination : 1/1
+Strict correct  (rank-1 only) : 1/1 (100.0%)
+Lenient correct (within 0.01) : 1/1 (100.0%)
+Mean rank of eliminated       : 1.00  (1 = worst = ideal)
+Rank-1 eliminations           : 100.0%
+
+Per-dataset breakdown:
+  [correct] wine                 eliminated=XGBoost                rank=1/6  score=0.1596
+
+Elimination results saved to F:\PBL_AutoML\experiments\results\elimination_result_wine.csv

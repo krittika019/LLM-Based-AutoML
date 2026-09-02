@@ -49,3 +49,13 @@ desktop.ini
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ── AutoML training artifacts (large, regenerable) ────────────────────────────
+AutogluonModels/
+catboost_info/
+experiments/AutogluonModels/
+experiments/catboost_info/
+experiments/catboost_*/
+
+# ── Raw dataset too large for GitHub (144 MB, over the 100 MB file limit) ─────
+experiments/datasets/creditcard.csv

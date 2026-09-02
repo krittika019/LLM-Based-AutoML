@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+house_prices,21613,18,regression,R²,RandomForest (default),0.8789,0.8746,138352.5902,71824.2793,37.74,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,Linear baseline,0.6987,0.6889,217914.881,128216.965,1.22,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,AutoGluon,,0.91,117171.3567,63920.2818,117.77,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,FLAML,,0.9131,115183.2924,64377.5173,92.64,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,AutoML (ours),,0.8869,131398.84553,66863.713878,647.55,ok,11,Bag(XGBoost×4),2.0,9.0,8.0,57.9,False,False

@@ -215,7 +215,7 @@ def compute_dataset_profile(df: pd.DataFrame, target_column: str | None = None) 
             "imbalance_ratio": imbalance_ratio,
         }
 
-    return {
+    profile: dict = {
         "n_rows": n_rows,
         "n_columns": n_cols,
         "columns": columns,
@@ -223,26 +223,78 @@ def compute_dataset_profile(df: pd.DataFrame, target_column: str | None = None) 
         "stub": False,
         "full_stats_columns": min(n_cols, _FULL_STATS_COL_LIMIT) if n_cols > 500 else n_cols,
     }
+    profile["difficulty"] = compute_difficulty_score(profile)
+    return profile
 
 
-def build_semantic_profile_vector(profile: dict) -> list[float]:
+def compute_difficulty_score(profile: dict) -> dict:
     """
-    Fixed-length vector for semantic memory retrieval (Planning Mode 1 soft recommendations).
-    Padded/truncated to match retrieve_similar expectations across runs.
+    Compute a dataset difficulty score (0.0 = easy, 1.0 = very hard).
+
+    Components:
+    - null_rate     : avg null % across all columns (high nulls → harder cleaning)
+    - skew          : avg |skew| of numeric columns (heavy skew → needs transforms)
+    - imbalance     : class imbalance ratio mapped to 0-1 (only for classification)
+    - dimensionality: feature/row ratio (high dim → harder generalization)
+    - cardinality   : fraction of categorical cols with >50 unique values (high card → encoding cost)
+
+    Each component is normalized to [0, 1] and weighted into an overall score.
+    Label: easy (<0.3), moderate (0.3–0.55), hard (0.55–0.75), very_hard (>0.75).
     """
-    dim = min(32, config.MAX_PROFILE_VECTOR_DIM)
-    vec = [0.0] * dim
-    vec[0] = float(profile.get("n_rows") or 0) / 1e6
-    vec[1] = float(profile.get("n_columns") or 0) / 1e3
     cols = profile.get("columns") or {}
-    nulls = [float(c.get("null_pct") or 0) for c in cols.values()]
-    vec[2] = sum(nulls) / max(len(nulls), 1) / 100.0
-    vec[3] = float(len([c for c, m in cols.items() if float(m.get("null_pct") or 0) > 30])) / max(
-        len(cols), 1
-    )
-    vec[4] = float(len([c for c, m in cols.items() if m.get("cardinality_equals_row_count")])) / max(
-        len(cols), 1
-    )
-    skewed = [m.get("skew") for m in cols.values() if m.get("skew") is not None]
-    vec[5] = sum(abs(float(x)) for x in skewed) / max(len(skewed), 1) if skewed else 0.0
-    return vec[:dim]
+    n_rows = max(int(profile.get("n_rows") or 1), 1)
+    n_cols = max(int(profile.get("n_columns") or 1), 1)
+
+    # ── null rate ─────────────────────────────────────────────────────────────
+    null_pcts = [float(m.get("null_pct") or 0) for m in cols.values()]
+    avg_null = sum(null_pcts) / max(len(null_pcts), 1) / 100.0  # 0-1
+
+    # ── skewness ─────────────────────────────────────────────────────────────
+    import math
+    skews = [abs(float(m["skew"])) for m in cols.values()
+             if m.get("skew") is not None and not math.isnan(float(m["skew"]))]
+    avg_skew = min(sum(skews) / max(len(skews), 1) / 5.0, 1.0)  # cap at skew=5
+
+    # ── class imbalance ───────────────────────────────────────────────────────
+    td = profile.get("target_distribution") or {}
+    imbalance_ratio = float(td.get("imbalance_ratio") or 1.0)
+    # ratio=1 → balanced (0), ratio=20+ → very imbalanced (1)
+    imbalance_score = min((imbalance_ratio - 1.0) / 19.0, 1.0) if imbalance_ratio >= 1 else 0.0
+
+    # ── dimensionality ────────────────────────────────────────────────────────
+    n_features = max(n_cols - 1, 1)
+    dim_ratio = min(n_features / n_rows, 1.0)  # features/rows, capped at 1
+
+    # ── high-cardinality categoricals ─────────────────────────────────────────
+    cat_cols = [m for m in cols.values() if m.get("inferred_dtype") == "categorical"]
+    high_card = sum(1 for m in cat_cols if int(m.get("nunique") or 0) > 50)
+    cardinality_score = high_card / max(len(cat_cols), 1) if cat_cols else 0.0
+
+    # ── weighted composite ────────────────────────────────────────────────────
+    weights = {
+        "null_rate": 0.25,
+        "skew": 0.20,
+        "imbalance": 0.20,
+        "dimensionality": 0.20,
+        "cardinality": 0.15,
+    }
+    components = {
+        "null_rate": round(avg_null, 4),
+        "skew": round(avg_skew, 4),
+        "imbalance": round(imbalance_score, 4),
+        "dimensionality": round(dim_ratio, 4),
+        "cardinality": round(cardinality_score, 4),
+    }
+    overall = sum(components[k] * weights[k] for k in weights)
+    overall = round(overall, 4)
+
+    if overall < 0.30:
+        label = "easy"
+    elif overall < 0.55:
+        label = "moderate"
+    elif overall < 0.75:
+        label = "hard"
+    else:
+        label = "very_hard"
+
+    return {"overall": overall, "label": label, "components": components}

@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+heart,918,11,classification,F1 (weighted),RandomForest (default),0.8631,0.8806,,,2.29,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),Linear baseline,0.8643,0.854,,,1.13,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),AutoGluon,,0.8698,,,57.07,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),FLAML,,0.8701,,,120.22,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),AutoML (ours),,0.891,,,1100.31,ok,12,CatBoost,5.0,4.0,2.0,81.8,False,False

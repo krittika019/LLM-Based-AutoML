@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+wine,1359,11,regression,R²,RandomForest (default),0.3797,0.4556,0.621,0.4696,5.14,ok,0,—,,,,,,
+wine,1359,11,regression,R²,Linear baseline,0.3466,0.3918,0.6564,0.5041,2.21,ok,0,—,,,,,,
+wine,1359,11,regression,R²,AutoGluon,,0.4678,0.614,0.4583,126.43,ok,0,—,,,,,,
+wine,1359,11,regression,R²,FLAML,,0.4471,0.6258,0.4808,94.13,ok,0,—,,,,,,
+wine,1359,11,regression,R²,AutoML (ours),,0.4872,0.602713,0.464649,723.17,ok,12,CatBoost,0.0,6.0,5.0,54.5,False,False

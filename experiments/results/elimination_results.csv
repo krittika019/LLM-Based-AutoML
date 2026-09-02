@@ -1,0 +1,7 @@
+eliminated_family,eliminated_subsample_score,subsample_rank_of_eliminated,total_candidates,was_worst_subsample_scorer,elimination_correct,best_survivor_test_score,all_subsample_scores,dataset,lenient_correct
+XGBoost,0.761,1,6,True,True,0.805,"{'RandomForest': 0.7786, 'GradientBoosting': 0.7655, 'XGBoost': 0.761, 'LightGBM': 0.7665, 'CatBoost': 0.7816, 'HistGradientBoosting': 0.7647}",churn,True
+LightGBM,0.8266,1,6,True,True,0.858,"{'RandomForest': 0.8325, 'GradientBoosting': 0.8366, 'XGBoost': 0.8319, 'LightGBM': 0.8266, 'CatBoost': 0.8504, 'HistGradientBoosting': 0.8282}",bank,True
+GradientBoosting,0.998,1,6,True,True,0.9995,"{'LightGBM': 0.9991, 'XGBoost': 0.9989, 'RandomForest': 0.9996, 'GradientBoosting': 0.998, 'CatBoost': 0.9993, 'HistGradientBoosting': 0.999}",creditcard_fraud,True
+XGBoost,0.6921,1,7,True,True,0.8997,"{'RandomForest': 0.7146, 'GradientBoosting': 0.7115, 'XGBoost': 0.6921, 'LightGBM': 0.7188, 'Ridge': 0.6932, 'HistGradientBoosting': 0.7217, 'CatBoost': 0.7048}",insurance,True
+XGBoost,0.8868,1,6,True,True,0.9721,"{'RandomForest': 0.8984, 'GradientBoosting': 0.8932, 'XGBoost': 0.8868, 'LightGBM': 0.9017, 'CatBoost': 0.9069, 'HistGradientBoosting': 0.8983}",life_expectancy,True
+XGBoost,0.1346,1,6,True,True,0.4885,"{'RandomForest': 0.2642, 'GradientBoosting': 0.1709, 'XGBoost': 0.1346, 'LightGBM': 0.1966, 'CatBoost': 0.2284, 'HistGradientBoosting': 0.196}",wine,True

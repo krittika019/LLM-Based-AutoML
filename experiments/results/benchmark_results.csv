@@ -1,0 +1,51 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+titanic,891,7,classification,F1 (weighted),RandomForest (default),0.8182,0.8038,,,2.34,ok,0,—,,,,,,
+titanic,891,7,classification,F1 (weighted),Linear baseline,0.7911,0.8033,,,1.27,ok,0,—,,,,,,
+titanic,891,7,classification,F1 (weighted),AutoGluon,,0.8022,,,50.63,ok,0,—,,,,,,
+titanic,891,7,classification,F1 (weighted),FLAML,,0.8135,,,90.49,ok,0,—,,,,,,
+titanic,891,7,classification,F1 (weighted),AutoML (ours),,0.8308,,,727.46,ok,11,HistGradientBoosting,3.0,5.0,1.0,88.9,False,True
+heart,918,11,classification,F1 (weighted),RandomForest (default),0.8631,0.8806,,,12.61,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),Linear baseline,0.8643,0.854,,,18.26,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),AutoGluon,,0.8751,,,19.7,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),FLAML,,0.8701,,,90.08,ok,0,—,,,,,,
+heart,918,11,classification,F1 (weighted),AutoML (ours),,0.8914,,,695.55,ok,12,CatBoost,5.0,4.0,2.0,81.8,False,False
+churn,7043,19,classification,F1 (weighted),RandomForest (default),0.7743,0.7872,,,592.58,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),Linear baseline,0.7698,0.7838,,,255.28,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),AutoGluon,,0.798,,,120.13,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),FLAML,,0.8001,,,90.16,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),AutoML (ours),,0.805,,,397.3,ok,11,GradientBoosting,15.0,2.0,2.0,89.5,False,False
+bank,11162,16,classification,F1 (weighted),RandomForest (default),0.85,0.8335,,,2.88,ok,0,—,,,,,,
+bank,11162,16,classification,F1 (weighted),Linear baseline,0.825,0.807,,,6.96,ok,0,—,,,,,,
+bank,11162,16,classification,F1 (weighted),AutoGluon,,0.849,,,85.83,ok,0,—,,,,,,
+bank,11162,16,classification,F1 (weighted),FLAML,,0.8359,,,95.57,ok,0,—,,,,,,
+bank,11162,16,classification,F1 (weighted),AutoML (ours),,0.8616,,,480.22,ok,13,Ensemble(CatBoost+XGBoost+HistGradientBoosting),7.0,4.0,5.0,68.8,False,False
+creditcard_fraud,50000,29,classification,F1 (weighted),RandomForest (default),0.9993,0.9992,,,38.22,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),Linear baseline,0.9991,0.999,,,32.57,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),AutoGluon,,0.9989,,,94.69,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),FLAML,,0.9976,,,91.84,ok,0,—,,,,,,
+creditcard_fraud,50000,29,classification,F1 (weighted),AutoML (ours),,0.9993,,,823.59,ok,11,XGBoost,0.0,21.0,9.0,70.0,False,False
+insurance,1337,6,regression,R²,RandomForest (default),0.8361,0.8818,4659.9324,2580.1791,0.88,ok,0,—,,,,,,
+insurance,1337,6,regression,R²,Linear baseline,0.739,0.8068,5958.0562,4178.2688,3.66,ok,0,—,,,,,,
+insurance,1337,6,regression,R²,AutoGluon,,0.8991,4305.7113,2410.3553,22.93,ok,0,—,,,,,,
+insurance,1337,6,regression,R²,FLAML,,0.9016,4251.7417,2461.7083,90.03,ok,0,—,,,,,,
+insurance,1337,6,regression,R²,AutoML (ours),,0.9031,4220.44864,1957.307148,502.8,ok,12,Stacking(CatBoost+GradientBoosting+HistGradientBoosting+RandomForest+Ridge),3.0,2.0,1.0,83.3,False,False
+life_expectancy,2928,20,regression,R²,RandomForest (default),0.9629,0.9671,1.6865,1.0503,12.31,ok,0,—,,,,,,
+life_expectancy,2928,20,regression,R²,Linear baseline,0.8158,0.8192,3.9544,2.927,3.67,ok,0,—,,,,,,
+life_expectancy,2928,20,regression,R²,AutoGluon,,0.969,1.6365,1.0399,96.76,ok,0,—,,,,,,
+life_expectancy,2928,20,regression,R²,FLAML,,0.9725,1.5436,0.979,91.19,ok,0,—,,,,,,
+life_expectancy,2928,20,regression,R²,AutoML (ours),,0.9724,1.545475,0.950485,1019.98,ok,13,Stacking(LightGBM+CatBoost+HistGradientBoosting+GradientBoosting+Ridge),2.0,11.0,7.0,65.0,False,False
+wine,1359,11,regression,R²,RandomForest (default),0.3797,0.4556,0.621,0.4696,1.44,ok,0,—,,,,,,
+wine,1359,11,regression,R²,Linear baseline,0.3466,0.3918,0.6564,0.5041,3.92,ok,0,—,,,,,,
+wine,1359,11,regression,R²,AutoGluon,,0.4692,0.6132,0.4583,7.82,ok,0,—,,,,,,
+wine,1359,11,regression,R²,FLAML,,0.4497,0.6243,0.4765,90.12,ok,0,—,,,,,,
+wine,1359,11,regression,R²,AutoML (ours),,0.4885,0.601952,0.463495,560.48,ok,12,CatBoost,0.0,6.0,5.0,54.5,False,False
+house_prices,21613,18,regression,R²,RandomForest (default),0.8789,0.8746,138352.5902,71824.2793,37.74,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,Linear baseline,0.6987,0.6889,217914.881,128216.965,1.22,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,AutoGluon,,0.91,117171.3567,63920.2818,117.77,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,FLAML,,0.9131,115183.2924,64377.5173,92.64,ok,0,—,,,,,,
+house_prices,21613,18,regression,R²,AutoML (ours),,0.8869,131398.84553,66863.713878,647.55,ok,11,Bag(XGBoost×4),2.0,9.0,8.0,57.9,False,False
+diamonds,53794,9,regression,R²,RandomForest (default),0.981,0.9823,520.5712,263.0254,49.35,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,Linear baseline,0.9197,0.9209,1098.8105,724.2024,25.1,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,AutoGluon,,0.9846,485.4495,251.7109,121.38,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,FLAML,,0.9831,508.1969,259.5532,94.34,ok,0,—,,,,,,
+diamonds,53794,9,regression,R²,AutoML (ours),,0.9824,518.675704,267.654738,472.4,ok,13,Bag(LightGBM×4),3.0,1.0,3.0,57.1,False,False

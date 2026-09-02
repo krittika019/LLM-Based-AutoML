@@ -1,0 +1,2 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+titanic,891,7,classification,F1 (weighted),AutoML (ours),,0.8333,,,1669.35,ok,11,CatBoost,3,5,1,88.9,False,False

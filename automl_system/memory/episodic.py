@@ -17,14 +17,18 @@ logger = logging.getLogger(__name__)
 # When MongoDB is unavailable, entries are stored here so reports still work.
 _MEMORY_FALLBACK: dict[str, list[dict[str, Any]]] = {}
 
-# Cache availability after first probe — avoids 5-second DNS timeout on every call.
+# Module-level singleton — avoids one TCP handshake per append_decision call.
 _db_available: bool | None = None  # None = not yet probed
+_mongo_client: MongoClient | None = None
 
 
 def _client() -> MongoClient | None:
-    global _db_available
+    global _db_available, _mongo_client
     if _db_available is False:
         return None
+    # Return the existing live connection without re-probing.
+    if _db_available is True and _mongo_client is not None:
+        return _mongo_client
     try:
         c = MongoClient(
             config.MONGODB_URI,
@@ -34,6 +38,7 @@ def _client() -> MongoClient | None:
         # Force a probe to detect DNS / auth failures immediately
         c.admin.command('ping')
         _db_available = True
+        _mongo_client = c
         return c
     except Exception as e:
         if _db_available is not False:
@@ -41,6 +46,7 @@ def _client() -> MongoClient | None:
             logger.warning("MongoDB connection failed (episodic): %s", e)
             logger.debug("Episodic memory will use in-memory fallback for this process lifetime.")
         _db_available = False
+        _mongo_client = None
         return None
 
 
@@ -66,11 +72,6 @@ def create_session() -> str:
         logger.warning("create_session failed: %s", e)
     except Exception as e:
         logger.warning("create_session unexpected error: %s", e)
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
     return session_id
 
 
@@ -138,21 +139,18 @@ def initialize_session_document(
             "initialize_session_document: unexpected error for session %s: %s — continuing.",
             session_id, e,
         )
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
 
 
 def append_decision(session_id: str, entry: dict[str, Any]) -> None:
     """Append a decision record to the session log."""
+    if not config.USE_MEMORY:
+        return  # ablation mode — decisions not persisted
     doc = {
         **entry,
         "ts": datetime.now(timezone.utc),
     }
     step = entry.get("step") or entry.get("phase") or "unknown"
-    print(f"[DECISIONS LOG] Appended: step={step} action={entry.get('action', '')[:60]!r}")
+    logger.debug("append_decision: step=%s action=%r", step, entry.get("action", "")[:60])
 
     _MEMORY_FALLBACK.setdefault(session_id, []).append(dict(doc))
 
@@ -172,19 +170,16 @@ def append_decision(session_id: str, entry: dict[str, Any]) -> None:
         logger.warning("append_decision failed for session %s: %s", session_id, e)
     except Exception as e:
         logger.warning("append_decision unexpected error for session %s: %s", session_id, e)
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
 
 
 def get_log(session_id: str) -> list[dict[str, Any]]:
     """Return the ordered list of decision entries for a session."""
+    if not config.USE_MEMORY:
+        return []  # ablation mode — no memory to retrieve
     client = _client()
     if client is None:
         mem = list(_MEMORY_FALLBACK.get(session_id) or [])
-        print(f"[DECISIONS LOG] get_log (memory): {len(mem)} entries for session {session_id[:8]}...")
+        logger.debug("get_log (memory-only): %d entries for session %s", len(mem), session_id[:8])
         return mem
     try:
         db = client[config.DATABASE_NAME]
@@ -192,22 +187,16 @@ def get_log(session_id: str) -> list[dict[str, Any]]:
         doc = coll.find_one({"session_id": session_id})
         if not doc:
             mem = list(_MEMORY_FALLBACK.get(session_id) or [])
-            print(f"[DECISIONS LOG] get_log: Mongo miss; memory has {len(mem)} entries")
+            logger.debug("get_log: Mongo miss; returning %d in-memory entries", len(mem))
             return mem
         entries = list(doc.get("entries", []))
-        n = len(entries)
-        print(f"[DECISIONS LOG] get_log: retrieved {n} entries from Mongo for session {session_id[:8]}...")
+        logger.debug("get_log: retrieved %d entries from Mongo for session %s", len(entries), session_id[:8])
         return entries
     except PyMongoError as e:
         logger.warning("get_log failed for session %s: %s", session_id, e)
         mem = list(_MEMORY_FALLBACK.get(session_id) or [])
-        print(f"[DECISIONS LOG] get_log (fallback after error): {len(mem)} entries")
+        logger.debug("get_log (fallback after error): %d entries", len(mem))
         return mem
     except Exception as e:
         logger.warning("get_log unexpected error for session %s: %s", session_id, e)
         return list(_MEMORY_FALLBACK.get(session_id) or [])
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass

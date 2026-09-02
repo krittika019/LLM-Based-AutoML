@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+insurance,1338,6,regression,R²,RandomForest (default),0.8358,0.8644,4588.1588,2540.9935,13.87,ok,0,—,,,,,,
+insurance,1338,6,regression,R²,Linear baseline,0.7402,0.7836,5796.6424,4181.7582,8.95,ok,0,—,,,,,,
+insurance,1338,6,regression,R²,AutoGluon,,0.8809,4300.6658,2284.1796,143.32,ok,0,—,,,,,,
+insurance,1338,6,regression,R²,FLAML,,0.8822,4276.7966,2436.9551,90.13,ok,0,—,,,,,,
+insurance,1338,6,regression,R²,AutoML (ours),,0.904,4199.008517,1957.718964,819.01,ok,11,Stacking(CatBoost+GradientBoosting+HistGradientBoosting+LightGBM+Ridge),3.0,2.0,1.0,83.3,False,False

@@ -1,0 +1,122 @@
+========================================================================
+CASE STUDY: HEART (classification)
+========================================================================
+Dataset    : heart  (918 rows × 11 features)
+Task       : Classification  |  Target: HeartDisease
+Runtime    : 888.3s  |  LLM calls: 10
+Best model : CatBoost
+Test score : 0.8914210436234823
+
+USER PROMPT
+------------------------------------------------------------------------
+  "I have patient records from a cardiology clinic. Predict which patients are at risk of heart disease. Prioritise catching every real case, even at the cost of false alarms."
+
+PHASE-BY-PHASE DECISION TRACE
+------------------------------------------------------------------------
+
+[PHASE 3 - SPLIT]
+  • split_data
+    → stratified split; train=734 test=184
+
+[PHASE 3 - EDA]
+  • run_eda_complete
+    → This dataset appears to be related to cardiovascular health, with a focus on predicting a target variable. However, there are some potential issues with distribution and imbalance that may impact mode
+
+[PHASE 3 - FEATURE SELECTION]
+  • selection_complete
+  • selection_complete
+  • selection_complete
+
+[PHASE 3 - DEEP CLEANING]
+  • all_assignments_logged_before_execution
+  • execution_complete
+  • all_assignments_logged_before_execution
+  • execution_complete
+  ... (+2 more decisions)
+
+[PHASE 3 - FEATURE ENGINEERING]
+  • skipped_by_router
+  • skipped_by_router
+  • skipped_by_router
+
+[VERIFICATION]
+  • zero_variance_check_failed | column=FastingBS
+  • zero_variance_check_failed | column=FastingBS
+  • zero_variance_check_failed | column=FastingBS
+
+[PHASE 5 - EXECUTION]
+  • mi_feature_filter
+    → Dropped 6 features with MI < 1% of max (0.2079): ['ChestPainType_TA', 'RestingBP', 'FastingBS', 'RestingECG_LVH', 'RestingECG_Normal', 'RestingECG_ST']
+  • hgb_guaranteed_baseline
+    → HistGradientBoosting not in LLM plan; injected — handles NaN natively, always competitive.
+  • llm_hpo_priors
+    → LLM suggested focused search bounds for ['RandomForest', 'GradientBoosting', 'XGBoost', 'LightGBM', 'CatBoost', 'HistGradientBoosting']
+  • hyperparameter_search_complete:RandomForest
+    → Best CV score 0.850578 using GridSearchCV; fold_variance=0.001307
+  ... (+18 more decisions)
+
+[TOP 3 MODELS]
+  #1 CatBoost                   test=0.8914  cv=0.8687
+  #2 RandomForest               test=0.8858  cv=0.8506
+  #3 GradientBoosting           test=0.8698  cv=0.8701
+  Gap #1 to #2: 0.0056
+
+[MODEL COMPARISON TABLE]
+  Model                          CV Score   Test Score   Eliminated  Source
+  ---------------------------- ---------- ------------ ------------  ---------
+  RandomForest                     0.8506       0.8858           no  ours
+  GradientBoosting                 0.8701       0.8698           no  ours
+  XGBoost                          0.8714       0.8535           no  ours
+  LightGBM                         0.8699       0.8644           no  ours
+  CatBoost                         0.8687       0.8914           no  ours
+  HistGradientBoosting             0.8655       0.8640           no  ours
+  AutoGluon                           N/A       0.8852           no  benchmark
+  FLAML                               N/A       0.8967           no  benchmark
+
+[FEATURE IMPORTANCES] (method: feature_importances)
+   1. ST_Slope_Up                   18.60%
+   2. Cholesterol                   16.70%
+   3. Oldpeak                       14.60%
+   4. MaxHR                         14.10%
+   5. ChestPainType_ASY              9.90%
+   6. Age                            8.50%
+   7. ST_Slope_Flat                  6.10%
+   8. Sex_F                          2.70%
+   9. Sex_M                          2.30%
+  10. ExerciseAngina_N               1.70%
+
+[EDA NARRATIVE]
+  top features: The top 3 most predictive features are MaxHR, Oldpeak, and FastingBS, with correlations of -0.407, 0.377, and 0.261 respectively. These features are likely to be important for model training due to their strong relationships with the target variable.
+  distribution problems: The columns 'Cholesterol' and 'FastingBS' are left and right skewed respectively, indicating potential distribution problems that may affect modelling. Additionally, 'RestingBP' is right skewed and 'Oldpeak' is right skewed, which may also impact model performance.
+  target imbalance: The target variable is imbalanced, with the majority class accounting for 55.31% of the data. This imbalance may require careful consideration of metric selection and model training techniques to avoid biased results.
+  near redundant features: There are no near-redundant feature pairs in the dataset, suggesting that all features are unique and contribute to the model.
+  domain observations: The column names suggest a medical domain, with features such as 'ChestPainType', 'RestingBP', 'Cholesterol', and 'FastingBS' indicating a focus on cardiovascular health.
+
+[FINAL REPORT]
+  # Stakeholder Report
+  *Best model: CatBoost | Test score: 0.8914*
+  
+  ## User Request and Task Understanding
+  The system predicts which patients are at risk of heart disease, prioritizing catching every real case, even at the cost of false alarms.
+  
+  ## Core Task and Data Challenges
+  This is a classification task with 918 rows and 12 columns, featuring a mix of numeric and categorical data. The target variable has a low severity imbalance, with the top class accounting for 55.31% of the data. The preprocessing steps were influenced by the initial data profile, which showed that certain columns required specific handling.
+  
+  ## EDA Findings and Preprocessing Decisions Applied
+  Exploratory data analysis measured the distribution and imbalance of the target variable. Preprocessing involved filling missing values using median for Age, RestingBP, Cholesterol, FastingBS, MaxHR, and Oldpeak, and mode for Sex, ChestPainType, RestingECG, ExerciseAngina, and ST_Slope. One-hot encoding was applied to Sex, ChestPainType, RestingECG, ExerciseAngina, and ST_Slope, while standard scaling was used for Age, RestingBP, Cholesterol, and MaxHR, and robust scaling for FastingBS and Oldpeak. Outliers were handled with IQR capping for FastingBS and Oldpeak, and six features were dropped due to near-zero mutual information with the outcome.
+  
+  ## Feature Engineering
+  No new features were created. The recorded reason for skipping feature engineering is that the preprocessing plan flags feature_engineering_likely=False.
+  
+  ## Model Selection and Evaluation Metric
+  The metric used is the weighted F1 score. The top three models are CatBoost with a test score of 0.8914, RandomForest with a test score of 0.8858, and GradientBoosting with a test score of 0.8698. The gap between the top model and the runner-up is 0.0056.
+  
+  **Measured on 184 held-out rows.** A majority-class guesser would score 0.5543 accuracy. This model scores 0.8913 (+0.3370). It catches 91 of 102 (89.2%) actual positive cases, misses 11, and raises 9 false alarms against 73 correctly cleared.
+  
+  ## Takeaway
+  Features like ST_Slope_Up, Cholesterol, and Oldpeak carry significant weight in the model. The fact that these features are important suggests that the model is capturing meaningful patterns in the data related to heart disease risk. This AutoML run delivers a model that can identify at-risk patients with a high degree of accuracy, meeting the user's goal of prioritizing the detection of true cases over avoiding false alarms.
+
+[REPORT AUDIT]
+  FAIL  unexplained_conflict: ['FastingBS']
+
+========================================================================

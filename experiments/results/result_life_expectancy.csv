@@ -1,0 +1,2 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+life_expectancy,2928,20,regression,R²,AutoML (ours),,0.9724,1.545475,0.950485,1087.86,ok,13,Stacking(LightGBM+CatBoost+HistGradientBoosting+GradientBoosting+Ridge),2,11,7,65.0,False,False

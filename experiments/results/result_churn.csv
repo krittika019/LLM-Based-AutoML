@@ -1,0 +1,6 @@
+dataset,n_rows,n_features,task_type,metric,system,cv_score,test_score,rmse,mae,time_s,status,llm_calls,best_model,rule_decisions,stat_decisions,llm_decisions,llm_avoided_pct,smote_applied,diversity_pruned
+churn,7043,19,classification,F1 (weighted),RandomForest (default),0.7743,0.7872,,,67.48,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),Linear baseline,0.7698,0.7838,,,53.79,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),AutoGluon,,0.798,,,157.84,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),FLAML,,0.8001,,,300.91,ok,0,—,,,,,,
+churn,7043,19,classification,F1 (weighted),AutoML (ours),,0.8036,,,476.65,ok,12,Stacking(CatBoost+GradientBoosting+XGBoost+RandomForest),16.0,2.0,2.0,90.0,False,False

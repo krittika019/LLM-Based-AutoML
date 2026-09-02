@@ -54,27 +54,25 @@ Return JSON only — no markdown, no explanation:
   "state": "in_scope" | "ambiguous" | "out_of_scope" | "unrecognizable",
   "task_type": "classification" | "regression" | null,
   "goal": "<plain English restatement of the prediction goal>",
-  "target_variable": "<exact column name from DATASET_COLUMNS> | "deferred" | null",
+  "target_variable": "<exact column name from DATASET_COLUMNS> | deferred",
   "user_constraints": ["<list of constraints mentioned by the user>"],
-  "message": "<what to show the user>",
-  "metric_hint": "<any metric preference mentioned, e.g. accuracy, AUC> | null",
-  "clarifying_question": "<one short question if state is ambiguous or unrecognizable, else null>"
+  "message": "<one sentence: what to show the user if not in_scope>",
+  "metric_hint": "<any metric preference mentioned, e.g. accuracy, AUC> | null"
 }}
 
 Rules:
-- state "in_scope": user wants classification or regression on tabular data.
-- If the user names a target explicitly (e.g. "predict Survived"), set target_variable to that exact column name if it exists in DATASET_COLUMNS.
-- If the task clearly implies a target and the column exists in DATASET_COLUMNS, set it.
-- If you cannot map to a specific column, set target_variable to "deferred" (not null).
-- state "ambiguous": goal is unclear — set clarifying_question to exactly one question, do NOT set target_variable.
-- state "out_of_scope": not a supervised ML classification/regression task on tabular data. Explain what IS supported and suggest a reframing if possible.
-- state "unrecognizable": instruction is incomprehensible — ask one clarifying question."""
+- "in_scope": user wants classification or regression on tabular data.
+- If the user names a target explicitly (e.g. "predict Survived"), set target_variable to that exact column name.
+- If you cannot map to a specific column, set target_variable to "deferred".
+- "ambiguous": goal is unclear — set message to one clarifying question.
+- "out_of_scope": not a supervised ML task on tabular data — explain in message.
+- "unrecognizable": instruction is incomprehensible — set message to one clarifying question."""
 
     raw = LLMClient().call(prompt, max_tokens=config.LLM_MAX_TOKENS_JSON)
 
     # LLM unavailable (empty response after all retries)
     if not raw:
-        logger.warning("Intent parser: LLM returned empty — marking unavailable.")
+        logger.warning("Intent parser: LLM returned empty - marking unavailable.")
         return {
             "state": "in_scope",
             "task_type": None,
@@ -83,7 +81,6 @@ Rules:
             "user_constraints": [],
             "message": "The AI service is temporarily unavailable. Please try again in a moment.",
             "metric_hint": None,
-            "clarifying_question": None,
             "target_column": None,
             "target_status": "deferred",
             "llm_unavailable": True,
@@ -106,13 +103,12 @@ Rules:
         "user_constraints": [],
         "message": "",
         "metric_hint": None,
-        "clarifying_question": None,
         "target_column": None,
         "target_status": "deferred",
         "llm_unavailable": False,
     }
     for k in ("state", "task_type", "goal", "target_variable", "user_constraints",
-              "message", "metric_hint", "clarifying_question"):
+              "message", "metric_hint"):
         if k in parsed and parsed[k] is not None:
             out[k] = parsed[k]
 
@@ -120,16 +116,20 @@ Rules:
     if "scope" in parsed and out["state"] == "in_scope" and parsed.get("scope") in _STATE_KEYWORDS:
         out["state"] = parsed["scope"]
 
-    # Resolve target_variable → target_column + target_status
+    # Resolve target_variable → target_column + target_status (case-insensitive match)
     tv = out.get("target_variable")
-    if tv and tv != "deferred" and str(tv) in column_names:
-        out["target_column"] = str(tv)
-        out["target_status"] = "inferred"
-    elif tv and tv != "deferred":
-        # LLM proposed a column name not in dataset — warn and defer
-        logger.warning("Intent parser proposed unknown column %r; deferring.", tv)
-        out["target_variable"] = "deferred"
-        out["target_status"] = "deferred"
+    col_lower_map = {c.lower(): c for c in column_names}  # lowercase → original name
+    if tv and tv != "deferred":
+        tv_str = str(tv).strip()
+        matched = col_lower_map.get(tv_str.lower())
+        if matched:
+            out["target_column"] = matched  # use original casing from dataset
+            out["target_status"] = "inferred"
+        else:
+            # LLM proposed a column name not in dataset — warn and defer
+            logger.warning("Intent parser proposed unknown column %r; deferring.", tv_str)
+            out["target_variable"] = "deferred"
+            out["target_status"] = "deferred"
     else:
         out["target_status"] = "deferred"
 

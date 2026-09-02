@@ -108,7 +108,7 @@ class RouterStats:
 def _is_identifier_name(col: str) -> bool:
     """Heuristic: column name strongly suggests it is a row identifier."""
     low = col.lower().strip()
-    id_suffixes = ("_id", "_key", "_code", "id", "key", "index", "uuid", "guid")
+    id_suffixes = ("_id", "_key", "_code", "_index", "_uuid", "_guid")
     id_prefixes = ("id_", "key_", "idx_", "row_")
     return (
         low in ("id", "key", "index", "uuid", "guid", "rowid", "row_id")
@@ -374,9 +374,21 @@ def should_engineer_features(
     n_rows = len(df)
 
     # Rule: plan explicitly says no FE
-    if plan.get("feature_engineering_likely") is False:
+    if plan.get("feature_engineering_recommended") is False:
         stats.record("rule")
         return False, "Preprocessing plan flags feature_engineering_likely=False — skipping LLM call."
+
+    # Rule: dense small all-numeric datasets (e.g. chemistry/sensor measurements).
+    # LLM-proposed interactions on already-complete numeric feature sets add noise
+    # rather than signal — skip FE to protect raw measurement fidelity.
+    non_target_cols = [c for c in df.columns if c != target]
+    all_numeric_frac = len(numeric_cols) / max(len(non_target_cols), 1)
+    if all_numeric_frac >= 0.9 and n_rows < 10000 and len(non_target_cols) <= 15:
+        stats.record("rule")
+        return False, (
+            f"Dense all-numeric dataset ({len(non_target_cols)} features, {n_rows} rows) — "
+            "skipping feature engineering to avoid adding noise on measurement data."
+        )
 
     # Rule: too few numeric columns to form interactions or ratios
     if len(numeric_cols) < _MIN_NUMERIC_FE:
