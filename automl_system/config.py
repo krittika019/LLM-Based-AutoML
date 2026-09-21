@@ -21,6 +21,8 @@ load_dotenv(override=True)  # current working directory (e.g. if launched from e
 # --- Secrets & deployment (override via .env) ---
 # Groq: https://console.groq.com/keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+# Second Groq account/key, used only as the fallback when the primary is rate-limited or erroring.
+GROQ_API_KEY_FALLBACK = os.getenv("GROQ_API_KEY_FALLBACK", "").strip()
 
 # MongoDB
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017").strip()
@@ -29,16 +31,17 @@ EPISODIC_COLLECTION = os.getenv("EPISODIC_COLLECTION", "episodic_memory").strip(
 
 
 # Groq model ids (see https://console.groq.com/docs/models)
-LLM_FLASH = os.getenv("LLM_FLASH", "llama-3.1-8b-instant").strip()
-LLM_PRO = os.getenv("LLM_PRO", "llama-3.3-70b-versatile").strip()
+LLM_FLASH = os.getenv("LLM_FLASH", "openai/gpt-oss-20b").strip()
+LLM_PRO = os.getenv("LLM_PRO", "openai/gpt-oss-120b").strip()
 
 # ── Alternative LLM providers (all OpenAI-compatible) ──────────────────────
 # Set LLM_PROVIDER to one of: groq | cerebras | together | ollama | openai
 # Cerebras is the fastest free-tier option (https://inference.cerebras.ai/)
 # Together AI: https://api.together.xyz  |  Ollama: http://localhost:11434
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
-# Fallback provider tried once if primary exhausts all retries (e.g. set to "cerebras" when primary is "groq")
-LLM_FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "cerebras").strip().lower()
+# Fallback provider tried once if primary exhausts all retries.
+# "groq_fallback" = a second Groq account (GROQ_API_KEY_FALLBACK), same models as primary.
+LLM_FALLBACK_PROVIDER = os.getenv("LLM_FALLBACK_PROVIDER", "groq_fallback").strip().lower()
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "").strip()
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
@@ -47,8 +50,8 @@ OPENAI_COMPAT_BASE_URL = os.getenv("OPENAI_COMPAT_BASE_URL", "").strip()
 OPENAI_COMPAT_API_KEY = os.getenv("OPENAI_COMPAT_API_KEY", "").strip()
 
 # Provider-specific model name overrides (sensible defaults per provider)
-LLM_FLASH_CEREBRAS = os.getenv("LLM_FLASH_CEREBRAS", "llama-3.1-8b").strip()
-LLM_PRO_CEREBRAS = os.getenv("LLM_PRO_CEREBRAS", "llama-3.3-70b").strip()
+LLM_FLASH_CEREBRAS = os.getenv("LLM_FLASH_CEREBRAS", "qwen-3.8-27b").strip()
+LLM_PRO_CEREBRAS = os.getenv("LLM_PRO_CEREBRAS", "gpt-oss-120b").strip()
 LLM_FLASH_TOGETHER = os.getenv("LLM_FLASH_TOGETHER", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo").strip()
 LLM_PRO_TOGETHER = os.getenv("LLM_PRO_TOGETHER", "meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo").strip()
 LLM_FLASH_OLLAMA = os.getenv("LLM_FLASH_OLLAMA", "llama3.2").strip()

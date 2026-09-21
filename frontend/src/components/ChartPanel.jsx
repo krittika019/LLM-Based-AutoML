@@ -96,7 +96,18 @@ function CorrelationHeatmap({ columns, matrix }) {
   const n = columns.length
   const cell = Math.max(52, Math.min(72, Math.floor(680 / n)))
   const labelW = 100
-  const topPad = 108          // tall enough for -45° rotated column headers
+  const fontSize = Math.max(9, Math.min(12, cell * 0.22))
+
+  // Short column names fit horizontally above their cell — much more legible
+  // than rotated text. Only rotate when a name would actually overflow.
+  const approxCharW = fontSize * 0.62
+  const displayNames = columns.map(c => (c.length > 15 ? c.slice(0, 14) + '…' : c))
+  const maxLabelW = Math.max(...displayNames.map(c => c.length * approxCharW))
+  const fitsHorizontal = maxLabelW <= cell - 6
+
+  const topPad = fitsHorizontal
+    ? fontSize + 20
+    : Math.ceil(maxLabelW * Math.SQRT1_2) + 20   // room for the 45° diagonal extent
   const svgW = n * cell + labelW + 24
   const svgH = topPad + n * cell + 8
 
@@ -108,23 +119,32 @@ function CorrelationHeatmap({ columns, matrix }) {
           height={svgH}
           style={{ display: 'block', fontFamily: 'inherit' }}
         >
-          {/* Column headers — rotated −45° so long names never overlap */}
-          {columns.map((col, ci) => {
+          {/* Column headers — horizontal when they fit, rotated 45° otherwise */}
+          {displayNames.map((label, ci) => {
             const cx = labelW + ci * cell + cell / 2
-            const py = topPad - 4
+            if (fitsHorizontal) {
+              return (
+                <text
+                  key={`col-${ci}`}
+                  x={cx}
+                  y={topPad - 10}
+                  textAnchor="middle"
+                  fontSize={fontSize}
+                  fill="currentColor"
+                  opacity={0.7}
+                >
+                  {label}
+                </text>
+              )
+            }
+            // Anchored at the baseline just above the grid, rotated so the label
+            // reads upward-right and stays entirely within the padded header area.
             return (
-            <text
-              key={`col-${ci}`}
-              x={cx}
-              y={py}
-              textAnchor="end"
-              fontSize={Math.max(9, Math.min(12, cell * 0.22))}
-              fill="currentColor"
-              opacity={0.65}
-              transform={`rotate(-45,${cx},${py})`}
-            >
-              {col.length > 15 ? col.slice(0, 14) + '…' : col}
-            </text>
+              <g key={`col-${ci}`} transform={`translate(${cx},${topPad - 6}) rotate(-45)`}>
+                <text textAnchor="start" fontSize={fontSize} fill="currentColor" opacity={0.7}>
+                  {label}
+                </text>
+              </g>
             )
           })}
           {columns.map((row, ri) => (

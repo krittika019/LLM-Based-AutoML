@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import Sidebar from './components/Sidebar.jsx'
-import PhaseCard from './components/PhaseCard.jsx'
+import PhaseTabs from './components/PhaseTabs.jsx'
 import InlineScript from './components/InlineScript.jsx'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -11,18 +11,6 @@ function findLastIdx(arr, pred) {
   }
   return -1
 }
-
-const PHASE_COLORS = {
-  1: '#3b82f6',
-  2: '#8b5cf6',
-  3: '#10b981',
-  4: '#f59e0b',
-  5: '#ef4444',
-  6: '#6366f1',
-  7: '#14b8a6',
-}
-
-export { PHASE_COLORS }
 
 // ── Token Cost Table ──────────────────────────────────────────────────────────
 const PHASE_LABELS = {
@@ -80,7 +68,7 @@ function TokenCostTable({ data }) {
 
 const TOTAL_PHASES = 7
 const PHASE_STUB_NAMES = [
-  'Initialization',
+  'Task & Data Understanding',
   'Planning',
   'Preprocessing',
   'Feature Engineering',
@@ -113,6 +101,58 @@ const FEATURES = [
   },
 ]
 
+// ── Run summary (copy-to-clipboard) ────────────────────────────────────────────
+
+function buildRunSummary({ instruction, fileInfo, phases, bestModel }) {
+  const lines = ['AutoML Assistant — Run Summary']
+  if (fileInfo) {
+    lines.push(`Dataset: ${fileInfo.filename} (${fileInfo.rows.toLocaleString()} rows × ${fileInfo.cols} columns)`)
+  }
+  if (instruction) lines.push(`Goal: ${instruction}`)
+
+  const modelPhase = [...phases].reverse().find(p => p.modelResults?.comparison_table?.length)
+  if (modelPhase) {
+    const mr = modelPhase.modelResults
+    const best = mr.comparison_table.find(r => r.is_best) ?? mr.comparison_table[0]
+    if (best) {
+      const rawScore = best.test_display_score ?? best.test_score
+      const score = rawScore != null && !isNaN(parseFloat(rawScore)) ? parseFloat(rawScore).toFixed(4) : 'N/A'
+      lines.push(`Best model: ${(best.model_name ?? '').replace(/^\*BEST\*\s*/, '')}`)
+      lines.push(`${mr.metric_display || mr.metric || 'Score'}: ${score}`)
+    }
+    if (mr.task_type) lines.push(`Task type: ${mr.task_type}`)
+  } else if (bestModel) {
+    lines.push(`Best model: ${bestModel}`)
+  }
+
+  return lines.join('\n')
+}
+
+function CopySummaryButton({ instruction, fileInfo, phases, bestModel }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    const text = buildRunSummary({ instruction, fileInfo, phases, bestModel })
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      /* clipboard permission denied — silently ignore */
+    }
+  }
+
+  return (
+    <button
+      className={`dl-btn dl-btn-outline${copied ? ' copied' : ''}`}
+      onClick={handleCopy}
+      title="Copy a plain-text run summary to clipboard"
+    >
+      {copied ? 'Copied' : '📋 Copy Summary'}
+    </button>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -137,6 +177,8 @@ export default function App() {
   const [pipelineStarted, setPipelineStarted] = useState(false)
   const [submittedInstruction, setSubmittedInstruction] = useState('')
   const [chatHistory, setChatHistory] = useState([])
+  const [runSeq, setRunSeq] = useState(0)
+  const [bestModel, setBestModel] = useState('')
 
   const eventSourceRef = useRef(null)
   const bottomRef = useRef(null)
@@ -170,14 +212,14 @@ export default function App() {
               ...updated[pendingIdx],
               name: event.phase_name,
               status: 'running',
-              expanded: true,
+              startedAt: updated[pendingIdx].startedAt ?? Date.now(),
             }
             return updated
           }
           // Loop re-entry: phase already ran and is 'done' — insert a fresh card after it
           const newEntry = {
             num: event.phase, name: event.phase_name, status: 'running',
-            messages: [], charts: null, modelResults: null, expanded: true,
+            messages: [], charts: null, modelResults: null, startedAt: Date.now(),
           }
           const lastIdx = findLastIdx(prev, p => p.num === event.phase)
           if (lastIdx !== -1) {
@@ -226,6 +268,16 @@ export default function App() {
         })
         break
 
+      case 'phase1_summary':
+        setPhases(prev => {
+          const idx = findLastIdx(prev, p => p.num === event.phase)
+          if (idx === -1) return prev
+          const updated = [...prev]
+          updated[idx] = { ...updated[idx], phase1Summary: event.data }
+          return updated
+        })
+        break
+
       case 'model_results':
         setPhases(prev => {
           const idx = findLastIdx(prev, p => p.num === event.phase)
@@ -245,7 +297,7 @@ export default function App() {
           updated[idx] = {
             ...updated[idx],
             status: statusMap[event.status] ?? 'done',
-            expanded: event.status !== 'done',
+            finishedAt: Date.now(),
           }
           return updated
         })
@@ -259,6 +311,7 @@ export default function App() {
         setPipelineDone(true)
         setScriptAvail(event.script_available ?? false)
         setReportAvail(event.report_available ?? false)
+        setBestModel(event.best_model ?? '')
         if (event.session) setSessionDict(event.session)
         setIsRunning(false)
         eventSourceRef.current?.close()
@@ -297,6 +350,8 @@ export default function App() {
         reportAvailable,
         runError,
         pipelineDone,
+        bestModel,
+        fileInfo,
       }])
     }
 
@@ -306,8 +361,11 @@ export default function App() {
     setScriptAvail(false)
     setReportAvail(false)
     setRunError('')
+    setBestModel('')
     setSubmittedInstruction(trimmedInstr)
+    setInstructions('')
     setPipelineStarted(true)
+    setRunSeq(s => s + 1)
     setPhases(PHASE_STUB_NAMES.map((name, i) => ({
       num: i + 1,
       name,
@@ -315,7 +373,7 @@ export default function App() {
       messages: [],
       charts: null,
       modelResults: null,
-      expanded: i === 0,
+      startedAt: i === 0 ? Date.now() : null,
     })))
 
     try {
@@ -326,6 +384,7 @@ export default function App() {
           file_path: fileInfo.file_path,
           instructions: trimmedInstr,
           session: sessionDict ?? null,
+          filename: fileInfo.filename ?? null,
         }),
       })
 
@@ -377,6 +436,7 @@ export default function App() {
     setPipelineStarted(false)
     setSubmittedInstruction('')
     setChatHistory([])
+    setBestModel('')
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -467,18 +527,11 @@ export default function App() {
                   </div>
                 )}
                 <section className="phases-section">
-                  {run.phases.map((phase, i) => (
-                    <PhaseCard
-                      key={`hist-${ri}-phase-${phase.num}-${i}`}
-                      phase={phase}
-                      runId={run.runId}
-                      onToggle={() => {}}
-                    />
-                  ))}
+                  <PhaseTabs key={`hist-${ri}`} phases={run.phases} />
                   {run.runError && (
                     <div className="error-banner" role="alert">⚠️ {run.runError}</div>
                   )}
-                  {run.pipelineDone && (run.scriptAvailable || run.reportAvailable) && (
+                  {run.pipelineDone && (
                     <div className="download-bar">
                       <span className="download-label">🎉 Pipeline complete!</span>
                       <div className="download-buttons">
@@ -492,6 +545,12 @@ export default function App() {
                             📋 Stakeholder PDF
                           </a>
                         )}
+                        <CopySummaryButton
+                          instruction={run.instruction}
+                          fileInfo={run.fileInfo}
+                          phases={run.phases}
+                          bestModel={run.bestModel}
+                        />
                       </div>
                     </div>
                   )}
@@ -534,20 +593,7 @@ export default function App() {
 
             <section className="phases-section">
 
-              {phases.map((phase, i) => (
-                <PhaseCard
-                  key={`phase-${phase.num}-${i}`}
-                  phase={phase}
-                  runId={runId}
-                  onToggle={() =>
-                    setPhases(prev => {
-                      const updated = [...prev]
-                      updated[i] = { ...updated[i], expanded: !updated[i].expanded }
-                      return updated
-                    })
-                  }
-                />
-              ))}
+              <PhaseTabs key={runSeq} phases={phases} />
 
               {runError && (
                 <div className="error-banner" role="alert">
@@ -555,7 +601,7 @@ export default function App() {
                 </div>
               )}
 
-              {pipelineDone && (scriptAvailable || reportAvailable) && (
+              {pipelineDone && (
                 <div className="download-bar">
                   <span className="download-label">🎉 Pipeline complete!</span>
                   <div className="download-buttons">
@@ -577,6 +623,12 @@ export default function App() {
                         📋 Stakeholder PDF
                       </a>
                     )}
+                    <CopySummaryButton
+                      instruction={submittedInstruction}
+                      fileInfo={fileInfo}
+                      phases={phases}
+                      bestModel={bestModel}
+                    />
                   </div>
                 </div>
               )}

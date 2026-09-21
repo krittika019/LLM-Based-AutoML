@@ -82,6 +82,13 @@ def _build_provider_client(provider: str) -> Any | None:
             return None
         return Groq(api_key=key, http_client=_http)
 
+    if prov == "groq_fallback":
+        key = config.GROQ_API_KEY_FALLBACK
+        if not key:
+            logger.warning("GROQ_API_KEY_FALLBACK not set.")
+            return None
+        return Groq(api_key=key, http_client=_http)
+
     # All other providers use the OpenAI package
     try:
         from openai import OpenAI as _OpenAI  # type: ignore[import]
@@ -121,7 +128,7 @@ def _resolve_model(logical_model: str, provider: str) -> str:
     prov = provider.lower()
     is_flash = logical_model == config.LLM_FLASH
     is_pro = logical_model == config.LLM_PRO
-    if prov == "groq":
+    if prov in ("groq", "groq_fallback"):
         return logical_model
     if prov == "cerebras":
         return config.LLM_FLASH_CEREBRAS if is_flash else (config.LLM_PRO_CEREBRAS if is_pro else logical_model)

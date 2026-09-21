@@ -44,6 +44,10 @@ from automl_system.memory import episodic
 from automl_system.memory.episodic import create_session, initialize_session_document
 from automl_system.state.session import SessionState
 from automl_system.utils.dataset_profile import compute_dataset_profile
+from automl_system.utils.phase1_summary import (
+    TARGET_CONFIDENCE_THRESHOLD,
+    build_phase1_summary,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,7 +90,7 @@ _PHASE_NODE_META: dict[str, tuple[int, str]] = {
     "feature_engineering": (3, "Feature Engineering"),
     "verification": (3, "Verification"),
     "phase4_planning": (4, "Execution Planning"),
-    "split_data": (5, "Data Split"),
+    "split_data": (3, "Train/Test Split"),
     "train_evaluate": (5, "Model Training"),
     "interpret_results": (5, "Result Interpretation"),
     "threshold_check": (6, "Threshold Check"),
@@ -185,6 +189,7 @@ def _pipeline_worker(
     file_path: str,
     user_instructions: str,
     session_dict: dict | None,
+    original_filename: str | None = None,
 ) -> None:
     """Full pipeline worker; emits SSE-shaped events via _RUNS[run_id]['q']."""
     reg = _RUNS[run_id]
@@ -200,7 +205,7 @@ def _pipeline_worker(
         # ── File existence guard (before any LLM call) ────────────────────────
         if not file_path or not Path(file_path).exists():
             # Emit a minimal phase_start so the frontend has context
-            emit({"type": "phase_start", "phase": 1, "phase_name": "Initialization"})
+            emit({"type": "phase_start", "phase": 1, "phase_name": "Task & Data Understanding"})
             emit({"type": "message", "phase": 1,
                   "text": "Please upload a dataset before describing your goal."})
             emit({"type": "phase_done", "phase": 1, "status": "failed"})
@@ -209,7 +214,7 @@ def _pipeline_worker(
             return
 
         df = _load_dataframe(file_path)
-        filename = Path(file_path).name
+        filename = original_filename or Path(file_path).name
 
         # Fresh session for a new file; re-use session for follow-up messages
         if session.dataset_state_pointer != file_path:
@@ -226,8 +231,8 @@ def _pipeline_worker(
         session.dataset_profile = compute_dataset_profile(df)
         session.phase_status_map["phase1"] = "running"
 
-        # ── Phase 1 — Initialization ──────────────────────────────────────────
-        emit({"type": "phase_start", "phase": 1, "phase_name": "Initialization"})
+        # ── Phase 1 — Task & Data Understanding ────────────────────────────────
+        emit({"type": "phase_start", "phase": 1, "phase_name": "Task & Data Understanding"})
 
         # Step 1: Parse intent — classify state + extract target
         intent = parse_user_intent(user_line, list(df.columns), session)
@@ -254,17 +259,38 @@ def _pipeline_worker(
                   "report_available": False, "session": session.to_dict()})
             return
 
-        # Step 2: Resolve target column — intent may have extracted it already
-        if not session.task_config.get("target_column") or \
-                str(session.task_config["target_column"]) not in df.columns:
-            _resolved, msg, _conf, _extra = resolve_target_from_data(session, df)
-            if msg:
-                emit({"type": "message", "phase": 1, "text": str(msg)})
+        # Step 2: Resolve target column — intent may have extracted it already.
+        # target_confidence stays 1.0 when the user already named a valid column
+        # explicitly (nothing to resolve); otherwise it reflects how sure the
+        # name-heuristic / LLM inference was.
+        target_pre_specified = bool(session.task_config.get("target_column")) and \
+            str(session.task_config.get("target_column")) in df.columns
+        target_confidence = 1.0
+        target_resolution_note: str | None = None
+        if not target_pre_specified:
+            _resolved, msg, target_confidence, _extra = resolve_target_from_data(session, df)
+            target_resolution_note = str(msg) if msg else None
 
         if not session.task_config.get("target_column") or \
                 str(session.task_config["target_column"]) not in df.columns:
             emit({"type": "message", "phase": 1,
                   "text": "Could not identify a target column. Please include the target column name in your prompt."})
+            session.phase_status_map["phase1"] = "failed"
+            emit({"type": "phase_done", "phase": 1, "status": "failed"})
+            emit({"type": "final", "script_available": False,
+                  "report_available": False, "session": session.to_dict()})
+            return
+
+        # Ambiguous target: don't silently proceed on a low-confidence guess —
+        # stop and ask the user to confirm the column explicitly.
+        if target_confidence < TARGET_CONFIDENCE_THRESHOLD:
+            candidate = session.task_config.get("target_column")
+            emit({"type": "message", "phase": 1,
+                  "text": (
+                      f"I inferred **`{candidate}`** as the target column, but with low confidence "
+                      f"({target_confidence:.0%}). Please confirm by explicitly naming the target "
+                      "column in your prompt (e.g. \"predict `column_name`\") and try again."
+                  )})
             session.phase_status_map["phase1"] = "failed"
             emit({"type": "phase_done", "phase": 1, "status": "failed"})
             emit({"type": "final", "script_available": False,
@@ -281,8 +307,6 @@ def _pipeline_worker(
             emit({"type": "final", "script_available": False,
                   "report_available": False, "session": session.to_dict()})
             return
-        if msg:
-            emit({"type": "message", "phase": 1, "text": msg})
 
         # Step 4: Full profile with target + initialize memory document
         resolved_target = session.task_config.get("target_column")
@@ -294,16 +318,19 @@ def _pipeline_worker(
             dataset_state_pointer=file_path,
         )
 
+        # Step 5: Structured problem/dataset understanding (no new LLM calls —
+        # assembled from facts already resolved above) — consumed by the UI
+        # and available to Phase 2+ via session.problem_summary.
+        summary = build_phase1_summary(
+            session=session, df=df,
+            target_confidence=target_confidence,
+            target_resolution_note=target_resolution_note,
+            source_filename=filename,
+        )
+        session.problem_summary = summary
+
         session.phase_status_map["phase1"] = "done"
-        task_type = str(session.task_config.get("task_type") or "")
-        metric = str(session.task_config.get("evaluation_metric") or "")
-        emit({"type": "message", "phase": 1,
-              "text": (
-                  f"Task: **{task_type}** | metric: **{metric}**. "
-                  f"{session.task_config.get('metric_rationale', '')}"
-              )})
-        emit({"type": "message", "phase": 1,
-              "text": f"Loaded **{len(df):,}** rows × **{df.shape[1]}** columns from `{filename}`."})
+        emit({"type": "phase1_summary", "phase": 1, "data": summary})
         emit({"type": "phase_done", "phase": 1, "status": "done"})
 
         # ── LangGraph phases 2–7 ───────────────────────────────────────────────
@@ -517,6 +544,7 @@ class RunRequest(BaseModel):
     file_path: str
     instructions: str
     session: Optional[dict] = None
+    filename: Optional[str] = None
 
 
 @app.post("/run")
@@ -539,7 +567,7 @@ async def start_run(request: RunRequest):
 
     t = threading.Thread(
         target=_pipeline_worker,
-        args=(run_id, request.file_path, request.instructions, request.session),
+        args=(run_id, request.file_path, request.instructions, request.session, request.filename),
         daemon=True,
     )
     t.start()

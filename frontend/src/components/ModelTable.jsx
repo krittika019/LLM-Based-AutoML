@@ -1,4 +1,7 @@
 import React, { useState } from 'react'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid,
+} from 'recharts'
 
 function scoreCell(v, lowerIsBetter = false, allScores = null) {
   if (v == null || v === '' || v === 'N/A') return <span className="score-na">—</span>
@@ -180,6 +183,46 @@ function EliminationAudit({ audit }) {
   )
 }
 
+function ModelComparisonChart({ rows, lowerIsBetter, metricDisplay }) {
+  const entries = rows
+    .map(r => ({
+      name: (r.model_name ?? '').replace(/^\*BEST\*\s*/, ''),
+      score: r.test_display_score ?? r.test_score,
+      isBest: !!r.is_best,
+      isElim: (r.status ?? '').startsWith('elim') || (r.status ?? '').startsWith('skip'),
+    }))
+    .filter(e => e.score != null && !isNaN(parseFloat(e.score)))
+    .map(e => ({ ...e, score: parseFloat(e.score) }))
+
+  if (entries.length < 2) return null
+
+  return (
+    <div className="model-compare-wrap">
+      <div className="chart-title">Model Comparison — {metricDisplay || 'Test Score'}</div>
+      <ResponsiveContainer width="100%" height={Math.max(120, entries.length * 34)}>
+        <BarChart data={entries} layout="vertical" margin={{ top: 4, right: 44, left: 6, bottom: 4 }}>
+          <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="rgba(99,102,241,0.08)" />
+          <XAxis type="number" tick={{ fontSize: 11 }} reversed={lowerIsBetter} />
+          <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} interval={0} />
+          <Tooltip
+            formatter={(v) => [Number(v).toFixed(4), metricDisplay || 'score']}
+            contentStyle={{ fontSize: 12 }}
+          />
+          <Bar dataKey="score" radius={[0, 4, 4, 0]}>
+            {entries.map((e, i) => (
+              <Cell
+                key={i}
+                fill={e.isBest ? '#10b981' : e.isElim ? '#cbd5e1' : '#6366f1'}
+                fillOpacity={e.isElim ? 0.55 : 1}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 export default function ModelTable({ data }) {
   const [expanded, setExpanded] = useState({})
   if (!data?.comparison_table?.length) return null
@@ -209,6 +252,7 @@ export default function ModelTable({ data }) {
         </div>
       )}
       <EliminationAudit audit={eliminationAudit} />
+      <ModelComparisonChart rows={rows} lowerIsBetter={lowerIsBetter} metricDisplay={metricDisplay} />
       <div className="model-table-scroll">
         <table className="model-table">
           <thead>

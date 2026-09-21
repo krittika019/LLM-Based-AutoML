@@ -97,7 +97,7 @@ def _select_metric_from_profile(
         if hint_override:
             return hint_override, f"Using user-specified metric '{metric_hint}'."
         return "r2", (
-            f"Regression: R² (scale-invariant; threshold 0.60 = model explains ≥60%% of "
+            f"Regression: R² (scale-invariant; threshold 0.60 = model explains ≥60% of "
             f"target variance).{hint_conflict_note}"
         )
 

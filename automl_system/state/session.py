@@ -61,6 +61,9 @@ class SessionState:
     # Phase 1
     intent_result: dict[str, Any] = field(default_factory=dict)
     local_decisions_log: list[dict[str, Any]] = field(default_factory=list)
+    # Structured problem/dataset understanding, consumable by Phase 2+ (see
+    # automl_system.utils.phase1_summary.build_phase1_summary).
+    problem_summary: dict[str, Any] = field(default_factory=dict)
 
     # Session lifecycle
     phase_status_map: dict[str, str] = field(default_factory=dict)
@@ -114,6 +117,7 @@ class SessionState:
             token_cost_table=dict(data.get("token_cost_table") or {}),
             intent_result=dict(data.get("intent_result") or {}),
             local_decisions_log=list(data.get("local_decisions_log") or []),
+            problem_summary=dict(data.get("problem_summary") or {}),
             phase_status_map=dict(data.get("phase_status_map") or {}),
             terminated=bool(data.get("terminated")),
             is_complete=bool(data.get("is_complete")),

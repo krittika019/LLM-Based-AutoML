@@ -359,6 +359,10 @@ def node_verification(state: OrchestratorState) -> OrchestratorState:
         lv["message"] = raw_msg
         session.last_verification = lv
         out["session"] = session.to_dict()
+        # Verification passed — the retry-rewind checkpoints (full dataframe copies at
+        # every preprocessing stage) are never read again for the rest of the run.
+        # Drop them now instead of carrying several dataframe copies through Phase 5-7.
+        out["checkpoints"] = {}
         return out
 
     if fail_step:

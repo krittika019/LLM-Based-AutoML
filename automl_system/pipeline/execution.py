@@ -31,6 +31,7 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.svm import SVC, SVR
 
 from automl_system import config
+from automl_system.utils import metric_labels
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -232,36 +233,8 @@ def _detect_gpu() -> bool:
 
 
 # ── Metric display helpers ───────────────────────────────────────────────────
-_NEG_METRIC_DISPLAY = {
-    "neg_mean_absolute_error": "MAE",
-    "neg_mean_squared_error": "MSE",
-    "neg_root_mean_squared_error": "RMSE",
-    "neg_median_absolute_error": "Median AE",
-}
-
-
-def _humanize_metric(metric: str) -> str:
-    """Convert sklearn internal scorer name to a human-readable display label."""
-    if metric in _NEG_METRIC_DISPLAY:
-        return f"{_NEG_METRIC_DISPLAY[metric]} (lower is better)"
-    return {
-        "r2": "R² Score",
-        "accuracy": "Accuracy",
-        "f1": "F1 Score",
-        "f1_weighted": "F1 Score (weighted)",
-        "f1_macro": "F1 Score (macro)",
-        "f1_micro": "F1 Score (micro)",
-        "roc_auc": "ROC-AUC",
-        "roc_auc_ovr_weighted": "ROC-AUC (weighted OVR)",
-        "precision": "Precision",
-        "precision_weighted": "Precision (weighted)",
-        "recall": "Recall",
-        "recall_weighted": "Recall (weighted)",
-    }.get(metric, metric)
-
-
-def _is_neg_metric(metric: str) -> bool:
-    return str(metric).startswith("neg_")
+_humanize_metric = metric_labels.humanize_metric
+_is_neg_metric = metric_labels.is_neg_metric
 
 
 def _to_display_score(score: float | None, metric: str) -> float | None:
@@ -1201,7 +1174,7 @@ If in doubt, always eliminate the lowest subsample scorer.
 
 Respond with ONLY the model family name to eliminate. No explanation. Choose from: {[r['family'] for r in subsample_results]}"""
 
-    response = client.call(prompt, max_tokens=32, temperature=0.0).strip()
+    response = client.call(prompt, max_tokens=1500, temperature=0.0).strip()
     # Parse: find the first family name that appears in the response
     for r in sorted(subsample_results, key=lambda x: x["subsample_score"]):
         if r["family"].lower() in response.lower():
@@ -1300,7 +1273,7 @@ Example shape:
 }}"""
 
     try:
-        raw = client.call(prompt, max_tokens=512, temperature=config.LLM_TEMPERATURE_JSON, json_mode=True)
+        raw = client.call(prompt, max_tokens=1500, temperature=config.LLM_TEMPERATURE_JSON, json_mode=True)
         if not raw:
             return {}
         try:
