@@ -45,7 +45,7 @@ export default function Phase1Summary({ data }) {
     <div className="p1-summary">
       {/* What I understood */}
       <div className="p1-block">
-        <div className="p1-block-title">What I understood</div>
+        <div className="p1-block-title">Task Understanding</div>
         <p className="p1-understood-text">{what_i_understood}</p>
         <div className="p1-problem-grid">
           <div><span className="p1-field-label">Task</span><span className="p1-field-value">{problem.task_type}</span></div>

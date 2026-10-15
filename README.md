@@ -63,6 +63,36 @@ Each column's imputation, outlier, encoding, scaling, and correlation decisions 
 
 Only Tier 3 reaches the LLM. Total LLM calls per run stay between 11 and 13 regardless of dataset size.
 
+## What's new
+
+Recent additions on top of the seven-phase supervised pipeline:
+
+### Unsupervised mode (clustering & dimensionality reduction)
+- **No target column needed.** The chat input has a mode toggle: *Predict a target* or *Find patterns / reduce dimensions*. In the second mode the UI sends `task_type: "clustering"` to `/run`, so Phase 1 skips intent parsing and target/metric resolution.
+- **Separate graph branch.** After `basic_cleaning`, the orchestrator forks (`route_after_basic_cleaning`) into a new `unsupervised_train` node and then straight to `phase7_final_output`. There is no split, CV, threshold loop, or retry — the run happens once on the full cleaned dataset.
+- **New module** [automl_system/pipeline/unsupervised.py](automl_system/pipeline/unsupervised.py). Defaults: K-Means (k searched up to 8 by silhouette) for clustering and PCA for dimensionality reduction. GMM, Agglomerative, DBSCAN, HDBSCAN, t-SNE, and UMAP (optional dependency) are implemented and selectable via the `algorithm` parameter, but not yet exposed in the UI. Identifier-like columns (IDs) are detected and excluded automatically.
+- **Internal validation** instead of held-out scores: silhouette, Davies-Bouldin, inertia, explained variance, per-cluster sizes, and per-cluster top distinguishing features (z-scores).
+- **Dedicated report prompt** (`_generate_unsupervised_report` in [report_generator.py](automl_system/agents/report_generator.py)) with its own sections and a deterministic fallback, so the supervised report prompt is untouched. Supervised-only outputs (pipeline script, comparison table) are left empty for these runs.
+- New session field `unsupervised_results`; new sample datasets `Mall_Customers.csv` and `CC_Cluster.csv` in `experiments/datasets/`.
+
+### Analytics page
+A new **📊 Analytics** tab (next to *Pipeline*) appears once a run finishes — [AnalyticsPage.jsx](frontend/src/components/AnalyticsPage.jsx) and [UnsupervisedResults.jsx](frontend/src/components/UnsupervisedResults.jsx):
+- Decision Router breakdown (rule / statistical / LLM share, and % of decisions resolved without an LLM call)
+- SHAP feature-impact chart
+- Model comparison table
+- Diagnostic plots: confusion matrix (classification) or actual-vs-predicted scatter (regression)
+- For unsupervised runs: cluster sizes, 2-D projection scatter, cluster profiles, and plain-language interpretations of silhouette and Davies-Bouldin
+
+### SHAP explainability
+[automl_system/utils/shap_explainer.py](automl_system/utils/shap_explainer.py) computes a ranked feature-impact summary for the winning Phase 5 model, using the cheapest valid explainer: `TreeExplainer` (RF / ExtraTrees / GB / XGBoost / LightGBM / CatBoost), `LinearExplainer` (linear models), or a sample-capped `KernelExplainer` (MLP / SVM / KNN). Result is stored in `session.shap_summary`; failures degrade to `{"available": false}` rather than breaking the run. Phase 5 also now emits a capped (300-point) actual-vs-predicted sample for regression.
+
+### Other changes
+- **Phase 1 summary** now renders the task understanding as three short lines (goal / problem type and metric / dataset size) instead of one dense paragraph.
+- **`server.py`** — `/run` accepts an optional `task_type`; the Phase 1 logic was restructured into unsupervised and supervised branches; `unsupervised_train` is registered as a Phase 5 stage in the progress stream.
+- **Frontend** — mode toggle, view switcher, new styles, `CLUSTER_COLORS` palette; `frontend/dist/` rebuilt.
+- **Architecture diagram** script and figure (`fig0_system_architecture`) updated.
+- **Dependencies** — added `shap` and (optional) `umap-learn` to `requirements.txt`.
+
 ## Installation
 
 Requires **Python 3.12+** and a running **MongoDB** instance (for the episodic decision log).
@@ -125,7 +155,7 @@ The built frontend in `frontend/dist/` is committed so the FastAPI server can se
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `POST` | `/upload` | Upload a CSV dataset |
-| `POST` | `/run` | Start a pipeline run |
+| `POST` | `/run` | Start a pipeline run (optional `task_type` for unsupervised mode) |
 | `GET` | `/stream/{run_id}` | Server-sent events for live progress |
 | `GET` | `/download/script/{run_id}` | Download the generated pipeline script |
 | `GET` | `/download/report/{run_id}` | Download the stakeholder report |
@@ -168,9 +198,11 @@ automl_system/
                planning, failure diagnosis, report generation
   graph/       LangGraph orchestrator — nodes, edges, and retry routing
   pipeline/    cleaning, EDA, feature selection/engineering, training,
-               verification, pipeline-script generation
+               verification, pipeline-script generation, unsupervised
+               clustering / dimensionality reduction
   memory/      episodic decision log (MongoDB-backed)
-  utils/       decision router, dataset profiling, decision log, JSON repair
+  utils/       decision router, dataset profiling, decision log, JSON repair,
+               SHAP explainer
   llm/         multi-provider LLM client with automatic fallback
   state/       shared session state passed between phases
 experiments/   benchmark harness, ablations, figure generation
@@ -181,7 +213,7 @@ tests/         end-to-end tests
 
 ## Limitations
 
-Tabular, supervised tasks only. Time series, image, and text data are not supported, nor are unsupervised or semi-supervised settings. Runtime is longer than AutoGluon or FLAML — the pipeline is sequential and also generates rationales and a natural-language report on every run, which those systems do not do.
+Tabular data only. Time series, image, and text data are not supported, nor are semi-supervised settings. Unsupervised support (clustering and dimensionality reduction) is a single-pass v1: no iterative retry loop, no LLM-guided algorithm selection, and only K-Means and PCA are reachable from the UI. Runtime is longer than AutoGluon or FLAML — the pipeline is sequential and also generates rationales and a natural-language report on every run, which those systems do not do.
 
 ## Citation
 

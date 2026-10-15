@@ -256,13 +256,19 @@ def build_phase1_summary(
             "text": f"Treated as classification because `{target_col}` has {n_classes} distinct classes.",
         })
 
-    # ── What I understood (deterministic natural-language summary) ─────────
-    objective_text = problem["objective"] or f"predict `{target_col}`"
-    what_i_understood = (
-        f"You want to {objective_text[0].lower() + objective_text[1:] if objective_text else objective_text}. "
-        f"Problem type: {task_type.capitalize()}. Target: `{target_col}`. "
-        f"Dataset: {n_rows:,} records. Predictor features: {feature_count}."
+    # ── Task understanding (deterministic natural-language summary) ────────
+    # The user's raw instruction can be multiple sentences (a goal plus
+    # constraints) — quoting it verbatim after "You want to ..." reads badly
+    # and stacking it into one paragraph with the rest is dense to parse, so
+    # each fact gets its own line instead.
+    objective_text = (problem["objective"] or f"predict `{target_col}`").strip()
+    goal_line = f"Goal: {objective_text}" + ("" if objective_text.endswith((".", "!", "?")) else ".")
+    type_line = (
+        f"This is a {task_type} problem predicting `{target_col}`, "
+        f"evaluated primarily by {problem['primary_metric_label']}."
     )
+    data_line = f"Dataset: {n_rows:,} records with {feature_count} predictor feature(s)."
+    what_i_understood = "\n".join([goal_line, type_line, data_line])
 
     return {
         "problem": problem,

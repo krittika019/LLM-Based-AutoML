@@ -9,6 +9,7 @@ from typing import Any
 
 from automl_system import config
 from automl_system.llm.client import LLMClient
+from automl_system.pipeline.unsupervised import CLUSTERING_ALGORITHMS, UNSUPERVISED_TASK_TYPES
 from automl_system.state.session import SessionState
 from automl_system.utils.decision_log import compact_decisions, merge_logs_for_report
 from automl_system.utils.llm_json import extract_json_object
@@ -734,10 +735,146 @@ def audit_report_text(
     return findings
 
 
+def _generate_unsupervised_report(session: SessionState) -> str:
+    """Clustering / dimensionality-reduction narrative.
+
+    Deliberately separate from generate_report's supervised prompt below — no
+    target column, no predicted-vs-actual, no feature-importance/model-comparison
+    machinery applies here, and reusing that heavily-tuned prompt risked breaking
+    it for the common case to accommodate a very different report shape.
+    """
+    task = session.task_config or {}
+    results = session.unsupervised_results or {}
+    profile = session.initial_dataset_profile or session.dataset_profile or {}
+    title = "# Stakeholder Report\n*Unsupervised run — no target column*\n\n"
+
+    if results.get("status") != "ok":
+        reason = results.get("reason") or "no results were recorded for this run."
+        return title + f"## Result\n\nThis run did not complete successfully: {reason}\n"
+
+    algo = results.get("algorithm")
+    goal = task.get("goal") or "(not specified)"
+    n_rows = profile.get("n_rows")
+    n_cols = profile.get("n_columns")
+
+    _ALGO_LABELS = {
+        "kmeans": "K-Means", "dbscan": "DBSCAN", "hdbscan": "HDBSCAN",
+        "gmm": "Gaussian Mixture", "agglomerative": "Agglomerative Clustering",
+    }
+    if algo in CLUSTERING_ALGORITHMS:
+        sizes = results.get("cluster_sizes") or {}
+        size_lines = "\n".join(f"  - Cluster {k}: {v} records" for k, v in sizes.items())
+        profiles = results.get("cluster_profiles") or []
+        profile_lines = "\n".join(
+            f"  Cluster {p['cluster']} ({p['size']} records, {p['pct']}%): "
+            + ", ".join(f"{f['name']}={f['mean']:.3g} (z={f['z_score']:+.2f})" for f in p.get("top_features", [])[:5])
+            for p in profiles
+        )
+        algo_label = _ALGO_LABELS.get(algo, algo)
+        cluster_count = results.get("best_k") if results.get("best_k") is not None else results.get("n_clusters_found")
+        noise_note = (
+            f" {results.get('n_noise')} point(s) were treated as noise (cluster -1, unassignable) — mention this once, plainly."
+            if results.get("n_noise") else ""
+        )
+        modeling_features = results.get("feature_columns") or []
+        excluded_features = results.get("excluded_features") or []
+        excluded_note = (
+            f"\nEXCLUDED AS IDENTIFIERS (not used for clustering, never cite as a distinguishing feature): {', '.join(excluded_features)}"
+            if excluded_features else ""
+        )
+        prompt = f"""You are writing a stakeholder report for a CLUSTERING run. There is no target column and no predicted-vs-actual comparison — never write as if there was one, and never mention "test score" or "accuracy".
+
+GOAL: {goal}
+DATASET: {n_rows} rows, {n_cols} columns.
+ALGORITHM: {algo_label}, {cluster_count} clusters found.{noise_note}
+FEATURES USED FOR CLUSTERING (state exactly these, nothing else, when naming what the clusters were built from): {', '.join(modeling_features)}{excluded_note}
+VALIDATION METRICS: silhouette={results.get('silhouette_score')}, davies_bouldin={results.get('davies_bouldin_score')}, inertia={results.get('inertia')}
+
+CLUSTER SIZES:
+{size_lines}
+
+CLUSTER PROFILES (top distinguishing features per cluster — feature mean and its z-score vs the overall mean; larger |z| = more distinctive to that cluster):
+{profile_lines}
+
+Write a markdown report with exactly these H2 sections, in this order:
+## User Request and Task Understanding
+## Cluster Overview
+## What Distinguishes Each Cluster
+## Quality of the Clustering
+## Takeaway
+
+Rules:
+- State the FEATURES USED list above exactly when describing what the clustering was based on — never guess or paraphrase a different feature set from the goal text.
+- In "Quality of the Clustering", explain in plain English what the silhouette score ({results.get('silhouette_score')}) means (near +1 = well-separated clusters, near 0 = overlapping, negative = likely misassigned points) and what this run's value suggests.
+- In "What Distinguishes Each Cluster", describe each cluster by its most distinctive features in plain language, not a raw number dump.
+- Plain markdown, no code fences, no title (the title is added separately)."""
+    else:  # pca / dimensionality_reduction
+        evr = results.get("explained_variance_ratio") or []
+        cum = results.get("cumulative_variance") or []
+        comp_lines = "\n".join(
+            f"  Component {i + 1}: {v * 100:.1f}% (cumulative {cum[i] * 100:.1f}%)"
+            for i, v in enumerate(evr[:10])
+        )
+        prompt = f"""You are writing a stakeholder report for a DIMENSIONALITY REDUCTION run (PCA). There is no target column and no model accuracy — never write as if there was one.
+
+GOAL: {goal}
+DATASET: {n_rows} rows, {n_cols} original columns.
+ALGORITHM: PCA, {results.get('n_components')} components retained.
+
+EXPLAINED VARIANCE PER COMPONENT:
+{comp_lines}
+
+Write a markdown report with exactly these H2 sections, in this order:
+## User Request and Task Understanding
+## What PCA Found
+## How Much Information Is Retained
+## Takeaway
+
+Rules:
+- Explain cumulative explained variance in plain English (e.g. "the first N components capture X% of the original information").
+- Never mention "clusters", "predicted vs actual", "test score" or "accuracy".
+- Plain markdown, no code fences, no title (the title is added separately)."""
+
+    text = LLMClient().call(
+        prompt, max_tokens=config.LLM_MAX_TOKENS_NARRATIVE, temperature=config.LLM_TEMPERATURE_NARRATIVE,
+    ).strip()
+
+    if text:
+        lines = text.splitlines()
+        while lines and (
+            (lines[0].strip().startswith("# ") and not lines[0].strip().startswith("## "))
+            or lines[0].strip().startswith("*")
+        ):
+            lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        return title + "\n".join(lines)
+
+    # Deterministic fallback — the model returned nothing usable.
+    logger.warning("falling back to the deterministic unsupervised report; the model returned no usable text")
+    if algo in CLUSTERING_ALGORITHMS:
+        cluster_count = results.get("best_k") if results.get("best_k") is not None else results.get("n_clusters_found")
+        return title + (
+            "## Cluster Overview\n\n"
+            f"{_ALGO_LABELS.get(algo, algo)} found **{cluster_count}** clusters "
+            f"(silhouette score {results.get('silhouette_score')}, Davies-Bouldin {results.get('davies_bouldin_score')}).\n\n"
+            f"{size_lines}\n"
+        )
+    return title + (
+        "## What PCA Found\n\n"
+        f"PCA retained **{results.get('n_components')}** components, capturing "
+        f"{round((cum[-1] if cum else 0) * 100, 1)}% of total variance.\n"
+    )
+
+
 def generate_report(session: SessionState, all_results: list[dict[str, Any]]) -> str:
     """
     Generate a markdown narrative covering data, decisions, model performance, iterations, and recommendation.
     """
+    task_type = str((session.task_config or {}).get("task_type") or "").lower()
+    if task_type in UNSUPERVISED_TASK_TYPES or session.unsupervised_results:
+        return _generate_unsupervised_report(session)
+
     decisions = merge_logs_for_report(session)
     if len(decisions) < 5:
         logger.warning(

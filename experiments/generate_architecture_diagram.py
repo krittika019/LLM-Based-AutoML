@@ -1,8 +1,9 @@
 """Generate the system architecture diagram for the research paper.
 
 Grounded directly in automl_system/graph/orchestrator.py's actual LangGraph
-node/edge structure (13 nodes, verification retry loop, failure-diagnosis
-feedback loop) -- not a stylized approximation.
+node/edge structure (14 nodes, verification retry loop, failure-diagnosis
+feedback loop, unsupervised fork after basic_cleaning) -- not a stylized
+approximation.
 
 Output: experiments/results/figures/fig0_system_architecture.png/.pdf
 """
@@ -104,8 +105,11 @@ def icon_database(ax, cx, cy, w=0.4, h=0.42, color="#555555"):
                           facecolor="white", edgecolor=color, lw=1.1, zorder=7))
 
 
-fig, ax = plt.subplots(figsize=(15, 10))
-ax.set_xlim(0, 15)
+# Canvas extended 2.75 units to the left (figsize widened to match, keeping
+# 1 unit per inch) to host the unsupervised branch beside the spine -- the
+# right column is fully occupied by the router, the log and the Phase 6 branch.
+fig, ax = plt.subplots(figsize=(18.25, 10))
+ax.set_xlim(-3.25, 15)
 ax.set_ylim(0, 10.8)
 ax.axis("off")
 
@@ -115,13 +119,14 @@ X0 = 0.6
 
 # Input -- moved up slightly (9.9 -> 10.05) to lengthen the arrow into
 # Phase 1, which was too short at the old spacing.
-box(ax, X0, 10.05, W, 0.5, "User Input — Raw Dataset + Natural-Language User Goal",
+box(ax, X0, 10.05, W, 0.5, "User Input — Raw Dataset + Natural-Language User Goal + Task Mode",
     C_INOUT, fontsize=9.5)
 
-# Phase 1
+# Phase 1 -- target/metric resolution only runs for supervised tasks; the
+# unsupervised mode (set by the UI toggle) skips it entirely.
 box(ax, X0, 9.05, W, 0.6,
     "Phase 1 — Intent Parsing & Task Classification\n"
-    "(target column, task type, metric resolution)",
+    "(task type; target column & metric resolution for supervised runs)",
     C_CONTROL, fontsize=8.7)
 
 # Phase 2
@@ -204,7 +209,7 @@ box(ax, X0, 5.55, W, 0.6,
 box(ax, X0, 4.4, W, 0.75,
     "Phase 5 — Model Training & Evaluation\n"
     "Progressive elimination → Optuna TPE + LLM HPO priors →\n"
-    "diversity-aware ensembling → threshold optimization",
+    "diversity-aware ensembling → threshold optimization → SHAP attribution",
     C_EXEC, fontsize=8.2)
 
 # Phase 6 -- threshold check + failure diagnosis + targeted revision all share
@@ -265,7 +270,7 @@ ax.text(feedback_x + 0.12, 6.5, "re-enters Phase 3 or 4", ha="left", va="center"
 # Phase 7
 box(ax, X0, 2.35, W, 0.65,
     "Phase 7 — Report Generation & Final Output\n"
-    "(stakeholder report, model recommendation, pipeline code)",
+    "(stakeholder report, analytics dashboard, model recommendation, pipeline code)",
     C_CONTROL, fontsize=8.5)
 
 # Vertical connectors down the spine (terminates at Phase 7 -- the
@@ -298,6 +303,44 @@ ax.add_patch(FancyBboxPatch(
     facecolor="none", edgecolor="#8a8a8a", linewidth=1.3,
     linestyle="-", zorder=1,
 ))
+
+# ── Unsupervised branch (left of the spine) ───────────────────────────────────
+# route_after_basic_cleaning() forks clustering / dimensionality-reduction
+# runs straight to unsupervised_train and then phase7_final_output -- they
+# never enter the train/test split, Phase 4, Phase 5 (supervised) or the
+# Phase 6 threshold loop, since there is no held-out label to score against.
+# Drawn on the left, mirroring the Phase 6 branch on the right, so the two
+# connectors cross nothing.
+UW = 2.85
+UX = wrap_x0 - 0.55 - UW
+ubx = UX + UW / 2                     # branch column x
+box(ax, UX, 4.4, UW, 0.75,
+    "Phase 5 — Unsupervised Execution\n"
+    "(K-Means / PCA on the full dataset;\n"
+    "silhouette, Davies-Bouldin, cluster profiles)",
+    C_EXEC, fontsize=7.2)
+
+# In: from the Basic Cleaning sub-box, left through the Phase 3 and wrapping
+# borders, then down the branch column into the box.
+bc_y = sub_y + 0.275
+in_path = MplPath(
+    [(X0 + 0.15, bc_y), (ubx, bc_y), (ubx, 4.4 + 0.75)],
+    [MplPath.MOVETO, MplPath.LINETO, MplPath.LINETO],
+)
+ax.add_patch(FancyArrowPatch(path=in_path, arrowstyle="-|>", mutation_scale=13,
+                              color="#333333", lw=1.4, zorder=2))
+ax.text((wrap_x0 + ubx) / 2, bc_y + 0.1, "Unsupervised (no target)",
+        ha="center", va="bottom", fontsize=7.5, color="#333333", weight="bold")
+
+# Out: down the branch column, then right into Phase 7 -- bypassing 4-6.
+out_path = MplPath(
+    [(ubx, 4.4), (ubx, 2.675), (X0, 2.675)],
+    [MplPath.MOVETO, MplPath.LINETO, MplPath.LINETO],
+)
+ax.add_patch(FancyArrowPatch(path=out_path, arrowstyle="-|>", mutation_scale=13,
+                              color="#333333", lw=1.4, zorder=2))
+ax.text(ubx + 0.12, 3.55, "bypasses Phases 4–6", ha="left", va="center",
+        fontsize=7.2, color="#333333", style="italic")
 
 # ── Cross-cutting infrastructure (right column, x = 8.5 to 14.6) ──────────────
 IX, IW = 8.7, 5.9
