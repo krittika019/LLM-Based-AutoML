@@ -357,9 +357,13 @@ def should_engineer_features(
     df: pd.DataFrame,
     session: Any,  # SessionState, typed loosely to avoid circular import
     stats: RouterStats,
+    skip_dense_rule: bool = False,
 ) -> tuple[bool, str]:
     """
     Decide whether LLM-based feature engineering is worth attempting.
+
+    `skip_dense_rule` disables the dense-numeric skip — used by CV-gated FE,
+    where a candidate that only adds noise is rejected by measurement anyway.
 
     Returns (proceed: bool, reason: str).
     """
@@ -383,7 +387,7 @@ def should_engineer_features(
     # rather than signal — skip FE to protect raw measurement fidelity.
     non_target_cols = [c for c in df.columns if c != target]
     all_numeric_frac = len(numeric_cols) / max(len(non_target_cols), 1)
-    if all_numeric_frac >= 0.9 and n_rows < 10000 and len(non_target_cols) <= 15:
+    if not skip_dense_rule and all_numeric_frac >= 0.9 and n_rows < 10000 and len(non_target_cols) <= 15:
         stats.record("rule")
         return False, (
             f"Dense all-numeric dataset ({len(non_target_cols)} features, {n_rows} rows) — "

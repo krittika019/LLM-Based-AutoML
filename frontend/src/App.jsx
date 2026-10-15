@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import PhaseTabs from './components/PhaseTabs.jsx'
 import InlineScript from './components/InlineScript.jsx'
+import AnalyticsPage from './components/AnalyticsPage.jsx'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -170,6 +171,7 @@ export default function App() {
   const [runId, setRunId] = useState(null)
   const [sessionDict, setSessionDict] = useState(null)
   const [scriptAvailable, setScriptAvail] = useState(false)
+  const [scriptValidation, setScriptValidation] = useState(null)
   const [reportAvailable, setReportAvail] = useState(false)
   const [runError, setRunError] = useState('')
   const [pipelineDone, setPipelineDone] = useState(false)
@@ -179,6 +181,8 @@ export default function App() {
   const [chatHistory, setChatHistory] = useState([])
   const [runSeq, setRunSeq] = useState(0)
   const [bestModel, setBestModel] = useState('')
+  const [mainView, setMainView] = useState('pipeline') // 'pipeline' | 'analytics'
+  const [mode, setMode] = useState('predict') // 'predict' | 'patterns'
 
   const eventSourceRef = useRef(null)
   const bottomRef = useRef(null)
@@ -310,6 +314,7 @@ export default function App() {
       case 'final':
         setPipelineDone(true)
         setScriptAvail(event.script_available ?? false)
+        setScriptValidation(event.script_validation ?? null)
         setReportAvail(event.report_available ?? false)
         setBestModel(event.best_model ?? '')
         if (event.session) setSessionDict(event.session)
@@ -347,6 +352,7 @@ export default function App() {
         phases,
         runId,
         scriptAvailable,
+        scriptValidation,
         reportAvailable,
         runError,
         pipelineDone,
@@ -359,12 +365,14 @@ export default function App() {
     setIsRunning(true)
     setPipelineDone(false)
     setScriptAvail(false)
+    setScriptValidation(null)
     setReportAvail(false)
     setRunError('')
     setBestModel('')
     setSubmittedInstruction(trimmedInstr)
     setInstructions('')
     setPipelineStarted(true)
+    setMainView('pipeline')
     setRunSeq(s => s + 1)
     setPhases(PHASE_STUB_NAMES.map((name, i) => ({
       num: i + 1,
@@ -385,6 +393,9 @@ export default function App() {
           instructions: trimmedInstr,
           session: sessionDict ?? null,
           filename: fileInfo.filename ?? null,
+          // Sent only in "Find patterns" mode — the UI has already decided the
+          // task type, so Phase 1 skips target resolution entirely for this run.
+          task_type: mode === 'patterns' ? 'clustering' : null,
         }),
       })
 
@@ -416,7 +427,7 @@ export default function App() {
       setRunError(err.message ?? 'Failed to start pipeline')
       setIsRunning(false)
     }
-  }, [instructions, fileInfo, isRunning, sessionDict, handleEvent])
+  }, [instructions, fileInfo, isRunning, sessionDict, handleEvent, mode])
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -431,12 +442,14 @@ export default function App() {
     setPhases([])
     setPipelineDone(false)
     setScriptAvail(false)
+    setScriptValidation(null)
     setReportAvail(false)
     setRunError('')
     setPipelineStarted(false)
     setSubmittedInstruction('')
     setChatHistory([])
     setBestModel('')
+    setMainView('pipeline')
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -474,6 +487,28 @@ export default function App() {
         </div>
 
         <div className="navbar-right">
+          {/* View switcher — appears once a run has produced results */}
+          {pipelineDone && sessionDict && (
+            <div className="view-switcher" role="tablist">
+              <button
+                role="tab"
+                aria-selected={mainView === 'pipeline'}
+                className={`view-switch-btn${mainView === 'pipeline' ? ' active' : ''}`}
+                onClick={() => setMainView('pipeline')}
+              >
+                Pipeline
+              </button>
+              <button
+                role="tab"
+                aria-selected={mainView === 'analytics'}
+                className={`view-switch-btn${mainView === 'analytics' ? ' active' : ''}`}
+                onClick={() => setMainView('analytics')}
+              >
+                📊 Analytics
+              </button>
+            </div>
+          )}
+
           {/* File indicator — visible when a file is loaded */}
           {fileInfo && (
             <div className="file-indicator" title={fileInfo.filename}>
@@ -513,8 +548,13 @@ export default function App() {
           </div>
         )}
 
+        {/* Analytics view — swapped in via the navbar toggle once a run has finished */}
+        {!showLanding && mainView === 'analytics' && sessionDict && (
+          <AnalyticsPage session={sessionDict} />
+        )}
+
         {/* Pipeline view — slides in when running begins */}
-        {!showLanding && (
+        {!showLanding && mainView === 'pipeline' && (
           <div className="pipeline-view">
 
             {/* ── Historical runs ── */}
@@ -554,7 +594,7 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  <InlineScript runId={run.runId} visible={run.pipelineDone && run.scriptAvailable} />
+                  <InlineScript runId={run.runId} visible={run.pipelineDone && run.scriptAvailable} validation={run.scriptValidation} />
                 </section>
                 <hr className="run-divider" />
               </div>
@@ -637,7 +677,8 @@ export default function App() {
               {pipelineDone && tokenCost && <TokenCostTable data={tokenCost} />}
 
               {/* Inline pipeline script — always visible after completion */}
-              <InlineScript runId={runId} visible={pipelineDone && scriptAvailable} />
+              <InlineScript runId={runId} visible={pipelineDone && scriptAvailable} validation={scriptValidation}
+                fallbackCode={sessionDict?.final_pipeline_script} />
 
               <div ref={bottomRef} style={{ height: 1 }} />
             </section>
@@ -646,29 +687,62 @@ export default function App() {
       </main>
 
       {/* ── Fixed input bar ── */}
-      <div className="input-bar">
-        <textarea
-          className="instruction-input"
-          placeholder={
-            fileInfo
-              ? 'Describe your prediction goal — e.g. "Predict Survived"'
-              : 'Upload a dataset first (☰), then describe your goal…'
-          }
-          value={instructions}
-          onChange={e => setInstructions(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-          disabled={isRunning}
-        />
-        <button
-          className={`send-btn${isRunning ? ' running' : ''}`}
-          onClick={handleRun}
-          disabled={isRunning || !fileInfo || !instructions.trim()}
-          title="Run pipeline (Enter)"
-          aria-label="Run pipeline"
-        >
-          {isRunning ? <span className="send-spinner" /> : '➤'}
-        </button>
+      <div className="input-bar-wrap">
+        {/* Mode toggle — decides task_type client-side, no LLM inference needed */}
+        <div className="mode-toggle-row">
+          <div className="mode-toggle" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'predict'}
+              className={`mode-toggle-btn${mode === 'predict' ? ' active' : ''}`}
+              onClick={() => setMode('predict')}
+              disabled={isRunning}
+            >
+              🎯 Predict a target
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'patterns'}
+              className={`mode-toggle-btn${mode === 'patterns' ? ' active' : ''}`}
+              onClick={() => setMode('patterns')}
+              disabled={isRunning}
+            >
+              🔍 Find patterns / reduce dimensions
+            </button>
+          </div>
+          {mode === 'patterns' && (
+            <span className="mode-toggle-pill">No target column needed</span>
+          )}
+        </div>
+
+        <div className="input-bar">
+          <textarea
+            className="instruction-input"
+            placeholder={
+              fileInfo
+                ? (mode === 'predict'
+                    ? 'Describe your prediction goal — e.g. "Predict Survived"'
+                    : 'Describe what you want to explore — e.g. "Segment customers by behavior"')
+                : 'Upload a dataset first (☰), then describe your goal…'
+            }
+            value={instructions}
+            onChange={e => setInstructions(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+            disabled={isRunning}
+          />
+          <button
+            className={`send-btn${isRunning ? ' running' : ''}`}
+            onClick={handleRun}
+            disabled={isRunning || !fileInfo || !instructions.trim()}
+            title="Run pipeline (Enter)"
+            aria-label="Run pipeline"
+          >
+            {isRunning ? <span className="send-spinner" /> : '➤'}
+          </button>
+        </div>
       </div>
 
     </div>

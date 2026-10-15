@@ -79,6 +79,8 @@ MAX_STEP_RETRIES = int(os.getenv("MAX_STEP_RETRIES", "2"))
 # AutoML framework benchmark time budget per framework (seconds).
 # Set to 0 in .env to disable all benchmarks.
 AUTOML_BENCHMARK_TIME_LIMIT = int(os.getenv("AUTOML_BENCHMARK_TIME_LIMIT", "120"))
+# The web app skips those comparison runs unless this is true (see server.py).
+APP_RUN_COMPETITORS: bool = os.getenv("APP_RUN_COMPETITORS", "false").strip().lower() in ("1", "true", "yes")
 
 # Application limits (optional env overrides for ops tuning)
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "3"))
@@ -106,3 +108,48 @@ USE_MEMORY: bool = _use_mem_raw not in ("0", "false", "no")
 
 # Heavy reasoning steps use LLM_PRO when wired by orchestration (not env — app logic)
 HEAVY_REASONING_STEPS = ["eda_narrative", "failure_diagnosis", "report_generation"]
+
+# ── Sandbox for executing generated code ───────────────────────────────────
+# auto   = Docker if the sandbox image is available, otherwise local subprocess
+# docker = Docker only (error if unavailable) | local = subprocess only | off = never execute
+SANDBOX_BACKEND = os.getenv("SANDBOX_BACKEND", "auto").strip().lower()
+SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "automl-sandbox:1").strip()
+SANDBOX_MEMORY = os.getenv("SANDBOX_MEMORY", "2g").strip()
+SANDBOX_CPUS = float(os.getenv("SANDBOX_CPUS", "2"))
+SANDBOX_TIMEOUT_SEC = int(os.getenv("SANDBOX_TIMEOUT_SEC", "300"))
+# Max wait for Docker to start a container; on a busy laptop Docker's VM can stall,
+# and "auto" then falls back to the local subprocess instead of skipping validation.
+SANDBOX_START_TIMEOUT_SEC = int(os.getenv("SANDBOX_START_TIMEOUT_SEC", "45"))
+# Start Docker Desktop only when a run needs the sandbox and stop it again afterwards
+# (only if the app started it). Its VM holds 1-3 GB of RAM even when idle.
+_on_demand_raw = os.getenv("SANDBOX_DOCKER_ON_DEMAND", "true").strip().lower()
+SANDBOX_DOCKER_ON_DEMAND: bool = _on_demand_raw not in ("0", "false", "no")
+SANDBOX_DOCKER_BOOT_TIMEOUT_SEC = int(os.getenv("SANDBOX_DOCKER_BOOT_TIMEOUT_SEC", "120"))
+# Container self-destructs after this, even if the app crashes before cleanup
+SANDBOX_MAX_LIFETIME_SEC = int(os.getenv("SANDBOX_MAX_LIFETIME_SEC", "7200"))
+
+# Feature engineering: "cv" keeps an LLM-proposed feature only if it improves the
+# cross-validated score of a fast LightGBM proxy (computed from original-scale
+# columns); "corr" is the older correlation filter on deep-cleaned columns.
+FE_SELECTION = os.getenv("FE_SELECTION", "cv").strip().lower()
+FE_ROUNDS = int(os.getenv("FE_ROUNDS", "2"))               # propose → measure → feed back
+FE_MIN_CV_GAIN = float(os.getenv("FE_MIN_CV_GAIN", "0.0005"))
+# LLM-written feature functions (group statistics, frequencies, binning, text) executed
+# in the Docker sandbox. "auto" = on when the Docker sandbox is available, "off" = never.
+# Off by default: on titanic/heart/churn/bank no code feature passed the CV gate, and the
+# longer prompts add LLM cost and latency. Worth enabling for text/high-cardinality data.
+FE_CODE_FEATURES = os.getenv("FE_CODE_FEATURES", "off").strip().lower()
+FE_CODE_TIMEOUT_SEC = int(os.getenv("FE_CODE_TIMEOUT_SEC", "120"))
+
+# Phase 6 diagnosis: controlled CV experiments (probes) run before the LLM diagnoses a
+# missed threshold. A probe counts as evidence when its paired gain exceeds this value
+# and one standard error of the folds.
+DIAG_PROBES = os.getenv("DIAG_PROBES", "true").strip().lower() not in ("0", "false", "no")
+DIAG_MIN_GAIN = float(os.getenv("DIAG_MIN_GAIN", "0.002"))
+
+# Phase 7 script validation: run the generated script in the sandbox and check it
+# reproduces the reported test score. Gap tolerance is absolute for bounded metrics
+# (accuracy, F1, R², AUC) and relative (×reported score) for error metrics (RMSE, MAE).
+SCRIPT_VALIDATION_MAX_REPAIRS = int(os.getenv("SCRIPT_VALIDATION_MAX_REPAIRS", "3"))
+SCRIPT_VALIDATION_TOLERANCE = float(os.getenv("SCRIPT_VALIDATION_TOLERANCE", "0.02"))
+SCRIPT_VALIDATION_REL_TOLERANCE = float(os.getenv("SCRIPT_VALIDATION_REL_TOLERANCE", "0.05"))

@@ -2,8 +2,29 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
+
+
+_PLAIN = (str, int, float, bool, type(None))
+
+
+def _copy_data(value: Any) -> Any:
+    """Copy containers recursively, skipping private non-data entries such as
+    "_fitted_estimator" (trained model objects kept in Phase 5 results).
+
+    dataclasses.asdict deep-copies everything, including those models — slow, memory
+    heavy, and deep-copying an XGBoost GPU booster from the server's main thread
+    crashes the process natively (the final event was never sent to the UI).
+    """
+    if isinstance(value, dict):
+        return {
+            k: _copy_data(v) for k, v in value.items()
+            if not (isinstance(k, str) and k.startswith("_") and not isinstance(v, (*_PLAIN, dict, list, tuple)))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_copy_data(v) for v in value]
+    return value
 
 
 @dataclass
@@ -47,16 +68,24 @@ class SessionState:
     execution_results: dict[str, Any] = field(default_factory=dict)
     execution_interpretation: str = ""
     feature_importances: dict[str, Any] = field(default_factory=dict)
+    shap_summary: dict[str, Any] = field(default_factory=dict)
+    # Clustering / dimensionality-reduction results (Phase 5's unsupervised branch).
+    # Empty for supervised runs.
+    unsupervised_results: dict[str, Any] = field(default_factory=dict)
 
     # Phase 6–7 iterative loop + final artifacts
     all_results: list[dict[str, Any]] = field(default_factory=list)
     last_failure_diagnosis: dict[str, Any] = field(default_factory=dict)
     final_report_markdown: str = ""
     final_pipeline_script: str = ""
+    # Phase 7 sandbox check of final_pipeline_script (see pipeline/script_validation.py)
+    script_validation: dict[str, Any] = field(default_factory=dict)
     final_comparison_table: list[dict[str, Any]] = field(default_factory=list)
 
     # Token cost tracking: {phase_name: llm_call_count}
     token_cost_table: dict[str, int] = field(default_factory=dict)
+    # Wall-clock seconds per graph node (accumulated across iterations)
+    phase_timings: dict[str, float] = field(default_factory=dict)
 
     # Phase 1
     intent_result: dict[str, Any] = field(default_factory=dict)
@@ -71,7 +100,7 @@ class SessionState:
     is_complete: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
+        d = {f.name: _copy_data(getattr(self, f.name)) for f in fields(self)}
         if self.expected_shape is not None:
             d["expected_shape"] = list(self.expected_shape)
         return d
@@ -109,12 +138,16 @@ class SessionState:
             execution_results=dict(data.get("execution_results") or {}),
             execution_interpretation=str(data.get("execution_interpretation") or ""),
             feature_importances=dict(data.get("feature_importances") or {}),
+            shap_summary=dict(data.get("shap_summary") or {}),
+            unsupervised_results=dict(data.get("unsupervised_results") or {}),
             all_results=list(data.get("all_results") or []),
             last_failure_diagnosis=dict(data.get("last_failure_diagnosis") or {}),
             final_report_markdown=str(data.get("final_report_markdown") or ""),
             final_pipeline_script=str(data.get("final_pipeline_script") or ""),
+            script_validation=dict(data.get("script_validation") or {}),
             final_comparison_table=list(data.get("final_comparison_table") or []),
             token_cost_table=dict(data.get("token_cost_table") or {}),
+            phase_timings=dict(data.get("phase_timings") or {}),
             intent_result=dict(data.get("intent_result") or {}),
             local_decisions_log=list(data.get("local_decisions_log") or []),
             problem_summary=dict(data.get("problem_summary") or {}),

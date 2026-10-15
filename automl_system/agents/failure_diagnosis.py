@@ -134,9 +134,54 @@ def _sanitize_diagnosis(parsed: dict[str, Any] | None, fallback: dict[str, Any])
     return out
 
 
-def diagnose_failure(session: SessionState, results: dict[str, Any]) -> dict[str, Any]:
+def _evidence_block(report: dict[str, Any] | None) -> str:
+    if not report or not report.get("probes"):
+        return ""
+    from automl_system.pipeline.diagnosis_probes import format_evidence
+
+    return (
+        "\nEXPERIMENT_EVIDENCE (controlled cross-validation experiments on the training rows; "
+        "each changes one thing; trust these over the heuristics below):\n"
+        + format_evidence(report)
+        + "\nIf an experiment is SIGNIFICANT, diagnose the failure it points to and make the "
+        "proposed_fix concrete (name the columns/settings). If none is significant, do not blame "
+        "preprocessing or features without other evidence.\n"
+    )
+
+
+def _apply_evidence(diagnosis: dict[str, Any], report: dict[str, Any] | None) -> dict[str, Any]:
+    """A significant measured improvement overrides a contradicting LLM diagnosis."""
+    out = dict(diagnosis)
+    if report:
+        out["evidence"] = {
+            "baseline": report.get("baseline"),
+            "metric": report.get("metric"),
+            "probes": [{k: p[k] for k in ("probe", "gain", "se", "significant")} for p in report.get("probes", [])],
+        }
+    best = (report or {}).get("best")
+    if not best:
+        return out
+    if (out.get("failure_type"), out.get("responsible_phase")) != (best["failure_type"], best["responsible_phase"]):
+        out["llm_diagnosis"] = {k: diagnosis.get(k) for k in ("failure_type", "responsible_phase", "proposed_fix")}
+        out["failure_type"] = best["failure_type"]
+        out["responsible_phase"] = best["responsible_phase"]
+        out["proposed_fix"] = f"{best['fix']} (measured CV gain {best['gain']:+.4f})"
+        out["should_exit"] = False
+        out["overridden_by_evidence"] = True
+    elif best["fix"] and best["fix"] not in str(out.get("proposed_fix") or ""):
+        out["proposed_fix"] = f"{out.get('proposed_fix') or ''} Measured: {best['fix']} (CV gain {best['gain']:+.4f})".strip()
+    return out
+
+
+def diagnose_failure(
+    session: SessionState, results: dict[str, Any], probe_report: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """
     Diagnose failure reason and route targeted revision.
+
+    `probe_report` (pipeline/diagnosis_probes.py) holds measured experiments; when one
+    shows a significant improvement, its failure type and phase take precedence over
+    the LLM's reading of the signals.
 
     Returns dict with: failure_type, responsible_phase, proposed_fix, should_exit.
     """
@@ -151,7 +196,7 @@ Inputs available to you:
 - DECISIONS_LOG_RECENT: {compact_decisions(decisions, limit=12)}
 - EDA_NARRATIVE: {(session.eda_narrative or '')[:800]}
 - ERROR_MESSAGES: {_failed_model_statuses(results) or results.get('status') or ''}
-
+{_evidence_block(probe_report)}
 Classify the failure into EXACTLY one of these four types based on the signals described:
 
 1. data_quality_issue
@@ -196,6 +241,7 @@ Return ONLY valid JSON:
     raw = LLMClient().call(prompt, model=config.LLM_PRO, max_tokens=config.LLM_MAX_TOKENS_JSON)
     parsed = extract_json_object(raw) if raw else None
     diagnosis = _sanitize_diagnosis(parsed, fallback)
+    diagnosis = _apply_evidence(diagnosis, probe_report)
 
     session.last_failure_diagnosis = diagnosis
     if session.decisions_log_id:

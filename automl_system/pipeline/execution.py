@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
+
+from automl_system.pipeline.replay import combine_class_votes, safe_numeric_features
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
@@ -32,6 +34,7 @@ from sklearn.svm import SVC, SVR
 
 from automl_system import config
 from automl_system.utils import metric_labels
+from automl_system.utils.shap_explainer import compute_shap_summary
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -272,14 +275,60 @@ def _infer_task_type(df: pd.DataFrame, session: SessionState) -> str:
     return "regression"
 
 
-def _safe_numeric_features(x: pd.DataFrame) -> pd.DataFrame:
-    out = x.copy()
-    for c in out.columns:
-        if pd.api.types.is_bool_dtype(out[c]):
-            out[c] = out[c].astype(int)
-        elif not pd.api.types.is_numeric_dtype(out[c]):
-            out[c] = pd.factorize(out[c].astype(str), sort=True)[0]
-    return out
+# Shared with the generated pipeline script (Phase 7) — see replay.py.
+_safe_numeric_features = safe_numeric_features
+
+# Hardware/threading params: the replayed script picks its own (CPU, sandbox cores).
+_NON_REPLAY_PARAMS = {"device", "gpu_id", "task_type", "n_jobs", "thread_count", "devices"}
+
+
+def _plain_value(v: Any) -> tuple[bool, Any]:
+    """(ok, python literal) — numpy scalars converted; nested objects rejected."""
+    if isinstance(v, np.generic):
+        v = v.item()
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return True, v
+    if isinstance(v, (list, tuple)):
+        items = [_plain_value(x) for x in v]
+        if all(ok for ok, _ in items):
+            return True, type(v)(x for _, x in items)
+    return False, None
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    if isinstance(a, float) and isinstance(b, float) and np.isnan(a) and np.isnan(b):
+        return True
+    try:
+        return bool(a == b) and type(a) is type(b)
+    except Exception:
+        return False
+
+
+def _estimator_spec(est: Any) -> dict[str, Any] | None:
+    """Class + constructor params that differ from the class defaults, so the
+    Phase 7 script can rebuild the exact estimator. None if not representable."""
+    if est is None:
+        return None
+    cls = type(est)
+    try:
+        params = est.get_params(deep=False)
+    except Exception:
+        return None
+    try:
+        defaults = cls().get_params(deep=False)
+    except Exception:
+        defaults = {}
+    out: dict[str, Any] = {}
+    for k, v in params.items():
+        if k in _NON_REPLAY_PARAMS or (k == "tree_method" and "gpu" in str(v)):
+            continue
+        if k in defaults and _same_value(defaults[k], v):
+            continue
+        ok, plain = _plain_value(v)
+        if not ok:
+            return None
+        out[k] = plain
+    return {"module": cls.__module__, "class": cls.__name__, "params": out}
 
 
 def _adaptive_test_size(n_rows: int) -> float:
@@ -1037,6 +1086,19 @@ def _compute_full_metrics(
                 out["mape_pct"] = round(
                     float(np.mean(np.abs((y_t[nonzero] - y_p[nonzero]) / y_t[nonzero])) * 100), 4
                 )
+        except Exception:
+            pass
+        # Capped actual-vs-predicted sample for the Analytics page scatter plot.
+        # Cheap (list construction only) — computed for every candidate row, not just
+        # the winner, since the cost is negligible next to model fitting.
+        try:
+            n_scatter = min(300, len(y_t))
+            if n_scatter > 0:
+                idx = np.random.RandomState(42).choice(len(y_t), size=n_scatter, replace=False)
+                out["scatter_sample"] = [
+                    {"actual": round(float(y_t[i]), 4), "predicted": round(float(y_p[i]), 4)}
+                    for i in idx
+                ]
         except Exception:
             pass
     return out
@@ -1811,6 +1873,11 @@ def _build_adaptive_ensemble(
                 from sklearn.preprocessing import StandardScaler as _SS
                 fresh.append(("Ridge", _Pipe([("scaler", _SS()), ("ridge", Ridge(alpha=1.0))])))
 
+            def _member_spec(name: str, est: Any) -> dict[str, Any] | None:
+                if name == "Ridge" and type(est).__name__ == "Pipeline":
+                    return {"special": "scaled_ridge", "alpha": 1.0}
+                return _estimator_spec(est)
+
             if len(fresh) >= 2:
                 cv_folds = 3 if n_rows > 5000 else 5
                 if task_type == "regression":
@@ -1873,6 +1940,12 @@ def _build_adaptive_ensemble(
                         "fold_variance": None,
                         "status": "ok",
                         "best_params": {"members": names, "type": "stacking"},
+                        "model_spec": {
+                            "kind": "stacking",
+                            "members": [[n, _member_spec(n, e)] for n, e in fresh],
+                            "final_estimator": _estimator_spec(stack.final_estimator),
+                            "cv": cv_folds,
+                        },
                         "leakage_suspected": False,
                         "detailed_metrics": stack_metrics,
                         "_fitted_estimator": stack,
@@ -1897,6 +1970,7 @@ def _build_adaptive_ensemble(
             _direct_preds: list[np.ndarray] = []
             _direct_weights: list[float] = []
             _direct_proba: list[np.ndarray] = []
+            _direct_rows: list[dict[str, Any]] = []
             for r in top3:
                 _fitted = r.get("_fitted_estimator")
                 if _fitted is None:
@@ -1905,6 +1979,7 @@ def _build_adaptive_ensemble(
                     _p = _fitted.predict(x_test).astype(float)
                     _direct_preds.append(_p)
                     _direct_weights.append(max(float(r.get("cv_score", 1e-6)), 1e-6))
+                    _direct_rows.append(r)
                     if task_type == "classification" and hasattr(_fitted, "predict_proba"):
                         try:
                             _direct_proba.append(_fitted.predict_proba(x_test))
@@ -1926,11 +2001,8 @@ def _build_adaptive_ensemble(
                             y_proba = y_proba + _pp * _wt
                         y_pred = np.argmax(y_proba, axis=1).astype(float)
                     else:
-                        # Hard vote: round weighted average of integer class labels
-                        _avg = np.zeros_like(_direct_preds[0])
-                        for _p, _wt in zip(_direct_preds, _w):
-                            _avg = _avg + _p * _wt
-                        y_pred = np.round(_avg).astype(float)
+                        # Hard vote: weighted majority of the predicted classes
+                        y_pred = combine_class_votes(_direct_preds, None, _w)[0].astype(float)
                 else:
                     # Regression: weighted average of continuous predictions
                     y_pred = np.zeros_like(_direct_preds[0])
@@ -1944,6 +2016,12 @@ def _build_adaptive_ensemble(
                             y_proba = y_proba + _pp * _wt
                 voting = "direct_avg"
                 ens = None
+                _vote_spec: dict[str, Any] | None = {
+                    "kind": "average",
+                    "members": [r.get("model_spec") for r in _direct_rows],
+                    "weights": [float(x) for x in _w],
+                    "soft": bool(_direct_proba and len(_direct_proba) == len(_direct_preds)),
+                }
             else:
                 # Fallback: rebuild and refit (used when _fitted_estimator unavailable).
                 _early_stop_keys = {"early_stopping_rounds", "eval_set", "eval_metric"}
@@ -1960,6 +2038,7 @@ def _build_adaptive_ensemble(
                         except Exception:
                             pass
                     estimators.append((r["model_name"], _est))
+                _vote_spec = None  # refit fallback is not replayed (script generated by LLM instead)
 
                 raw_weights = [max(float(r["cv_score"]), 1e-6) for r in top3[:len(estimators)]]
                 w_min = min(raw_weights)
@@ -2010,6 +2089,7 @@ def _build_adaptive_ensemble(
                     "fold_variance": None,
                     "status": "ok",
                     "best_params": {"members": members, "voting": voting},
+                    "model_spec": _vote_spec,
                     "leakage_suspected": False,
                     "detailed_metrics": vote_metrics,
                     "_fitted_estimator": ens,
@@ -2058,6 +2138,7 @@ def run_pipeline(
     _x_train_for_benchmarks = x_train
     _y_train_for_benchmarks = y_train
     _smote_was_applied = False
+    _smote_spec: dict[str, Any] | None = None
 
     # ── C: SMOTE for imbalanced classification ────────────────────────────────
     # Applied on train split only (never touches x_test / y_test).
@@ -2083,6 +2164,7 @@ def run_pipeline(
                             f"balanced to {len(y_train)} training samples"
                         )
                         _smote_was_applied = True
+                        _smote_spec = {"k_neighbors": int(_k_neighbors), "random_state": 42}
                         log_decision(
                             session, step="Phase 5 - Execution", action="smote_applied",
                             rationale=(
@@ -2364,6 +2446,8 @@ def run_pipeline(
         best_params: dict[str, Any] = {}
         cv_score = float("-inf")
         fold_variance = 0.0
+        # How best_estimator was finally fitted — replayed by the Phase 7 script.
+        fit_info: dict[str, Any] = {"mode": "full"}
 
         try:
             if search_name == "GridSearchCV":
@@ -2502,6 +2586,8 @@ def run_pipeline(
                                     _Xtr_r, _Xval_r, _ytr_r, _yval_r = _tts_r(
                                         _xt_r, _y_r, test_size=0.1, random_state=42
                                     )
+                                fit_info = {"mode": "early_stopping", "rows": int(_r_size), "seed": 43,
+                                            "val_size": 0.1, "split_seed": 42}
                                 if family == "XGBoost":
                                     best_estimator.set_params(n_estimators=1000, early_stopping_rounds=50)
                                     best_estimator.fit(_Xtr_r, _ytr_r, eval_set=[(_Xval_r, _yval_r)], verbose=False)
@@ -2523,6 +2609,7 @@ def run_pipeline(
                                     _xt_refit  = _xt.iloc[_refit_idx]    if hasattr(_xt, "iloc")    else _xt[_refit_idx]
                                     _y_refit   = y_train.iloc[_refit_idx] if hasattr(y_train, "iloc") else y_train[_refit_idx]
                                     best_estimator.fit(_xt_refit, _y_refit)
+                                    fit_info = {"mode": "capped", "rows": int(_refit_cap), "seed": 42}
                                     print(f"[EXECUTION] {family} refit capped at {_refit_cap}/{n_rows} rows (RAM guard)", flush=True)
                                 else:
                                     best_estimator.fit(_xt, y_train)
@@ -2559,6 +2646,7 @@ def run_pipeline(
                                     _xt_refit  = _xt.iloc[_refit_idx]    if hasattr(_xt, "iloc")    else _xt[_refit_idx]
                                     _y_refit   = y_train.iloc[_refit_idx] if hasattr(y_train, "iloc") else y_train[_refit_idx]
                                     best_estimator.fit(_xt_refit, _y_refit)
+                                    fit_info = {"mode": "capped", "rows": int(_refit_cap), "seed": 42}
                                     print(f"[EXECUTION] {family} refit capped at {_refit_cap}/{n_rows} rows (RAM guard)", flush=True)
                                 else:
                                     best_estimator.fit(_xt, y_train)
@@ -2679,6 +2767,13 @@ def run_pipeline(
                 "leakage_suspected": leakage_suspected,
                 "detailed_metrics": full_metrics,
                 "_fitted_estimator": best_estimator,
+                "model_spec": {
+                    "kind": "single",
+                    "family": family,
+                    "estimator": _estimator_spec(best_estimator),
+                    "fit": fit_info,
+                    "impute_median": bool(_has_nan and family in _NAN_INTOLERANT_FAMILIES),
+                },
             }
 
         except Exception as e:
@@ -3029,6 +3124,8 @@ def run_pipeline(
                                 **(best_row.get("best_params") or {}),
                                 "decision_threshold": _opt_thr,
                             },
+                            "model_spec": {"kind": "threshold", "base": best_row.get("model_spec"),
+                                           "threshold": float(_opt_thr)},
                         }
                         comparison_table.append(_thr_row)
                         best_row = _thr_row
@@ -3081,9 +3178,22 @@ def run_pipeline(
 
         # Collect predictions in log space (expm1 applied after averaging below).
         _bag_preds: list[np.ndarray] = []
+        _bag_probas: list[np.ndarray | None] = []  # aligned with _bag_preds
+        _bag_member_spec: dict[str, Any] | None = None
+        _bag_seeds_ok: list[int] = []
+
+        def _bag_proba(est: Any) -> np.ndarray | None:
+            if task_type != "classification" or not hasattr(est, "predict_proba"):
+                return None
+            try:
+                return est.predict_proba(x_test)
+            except Exception:
+                return None
+
         if _bag_fitted is not None:
             try:
                 _bag_preds.append(_bag_fitted.predict(x_test).astype(float))
+                _bag_probas.append(_bag_proba(_bag_fitted))
             except Exception:
                 pass
 
@@ -3097,18 +3207,24 @@ def run_pipeline(
                 _b.set_params(**_sp)
                 _b.fit(x_train, y_train)
                 _bag_preds.append(_b.predict(x_test).astype(float))
+                _bag_probas.append(_bag_proba(_b))
+                _bag_seeds_ok.append(_seed)
+                if _bag_member_spec is None:
+                    _bag_member_spec = _estimator_spec(_b)
             except Exception as _be:
                 logger.debug("Seed bagging seed=%d failed: %s", _seed, _be)
 
         if len(_bag_preds) >= 2:
-            _bag_avg = np.mean(_bag_preds, axis=0)
+            _bag_y_proba = None
             if task_type == "classification":
-                # Round majority vote back to integer class labels
-                _bag_y = np.round(_bag_avg).astype(float)
+                # Soft vote over seed probabilities (majority vote if any model lacks them)
+                _bag_y, _bag_y_proba = combine_class_votes(_bag_preds, _bag_probas)
+                _bag_y = _bag_y.astype(float)
             else:
+                _bag_avg = np.mean(_bag_preds, axis=0)
                 _bag_y = np.expm1(_bag_avg) if _log_target else _bag_avg
             try:
-                _bag_score = _test_score(metric, task_type, _y_test_orig, _bag_y, None)
+                _bag_score = _test_score(metric, task_type, _y_test_orig, _bag_y, _bag_y_proba)
             except Exception:
                 _bag_score = None
             _bag_label = f"Bag({best_model_name}×{len(_bag_preds)})"
@@ -3131,9 +3247,16 @@ def run_pipeline(
                     "status": "ok",
                     "best_params": {**_bag_params, "n_seeds": len(_bag_preds)},
                     "leakage_suspected": False,
-                    "detailed_metrics": _compute_full_metrics(task_type, _y_test_orig, _bag_y, None),
+                    "detailed_metrics": _compute_full_metrics(task_type, _y_test_orig, _bag_y, _bag_y_proba),
                     "_fitted_estimator": _bag_fitted,
                     "is_ensemble": True,
+                    "model_spec": {
+                        "kind": "bag",
+                        "base": best_row.get("model_spec"),
+                        "member": _bag_member_spec,
+                        "seed_key": "random_seed" if best_model_name == "CatBoost" else "random_state",
+                        "seeds": _bag_seeds_ok,
+                    },
                 }
                 comparison_table.append(_bag_row)
                 best_row = _bag_row
@@ -3157,6 +3280,25 @@ def run_pipeline(
         print(f"[EXECUTION] Feature importances ({feature_importances['method']}): top-5 = {_top5}")
     else:
         print(f"[EXECUTION] Feature importances not available for {best_model_name} (KNN/SVM/MLP)")
+
+    # ── SHAP explainability (Analytics page) ─────────────────────────────────
+    _shap_family = best_model_name.split("[")[0].split("(")[0]  # strip threshold/ensemble suffixes
+    if best_model_name.startswith("Bag("):
+        # Seed-bagged model: _fi_estimator is the original fitted base model, so the
+        # base family's exact explainer applies (e.g. "Bag(CatBoost×4)" → CatBoost).
+        _shap_family = best_model_name[len("Bag("):].split("×")[0]
+    shap_summary = (
+        compute_shap_summary(_fi_estimator, x_train, x_test, task_type, _shap_family)
+        if _fi_estimator is not None else {"available": False, "reason": "no_fitted_estimator"}
+    )
+    session.shap_summary = shap_summary
+    if shap_summary.get("available"):
+        _top3 = [f["name"] for f in shap_summary["features"][:3]]
+        print(f"[EXECUTION] SHAP ({shap_summary['method']}): top-3 impact = {_top3}")
+        log_decision(session, step="Phase 5 - Execution", action="shap_computed",
+                     method=shap_summary["method"], top_3=_top3)
+    else:
+        print(f"[EXECUTION] SHAP unavailable: {shap_summary.get('reason')}")
 
     # ── LLM Elimination Accuracy (Gap 3 research metric) ─────────────────────
     # After full training, check whether the LLM's Round-1 elimination was correct.
@@ -3357,9 +3499,17 @@ Plain text only. No JSON. No bullet points. Flowing sentences."""
         "near_perfect_sentinel": config.NEAR_PERFECT_SCORE_SENTINEL,
         "elimination_audit": elimination_audit,
         "feature_importances": feature_importances,
+        "shap_summary": shap_summary,
         "competitor_scores": competitor_scores,
         "best_competitor_score": best_competitor_score,
         "models_trained": survivors,
+        "replay": {
+            "smote": _smote_spec,
+            "log_target": bool(_log_target),
+            "has_nan": bool(_has_nan),
+            "feature_columns": list(feature_cols),
+            "model": best_row.get("model_spec"),
+        },
     }
 
     session.execution_results = results

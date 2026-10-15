@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import math
+import multiprocessing
 import logging
 import queue as _queue
 import sys
@@ -33,6 +36,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from automl_system import config
 from automl_system.agents.intent_parser import parse_user_intent
 from automl_system.agents.task_classifier import (
     resolve_target_from_data,
@@ -42,8 +46,10 @@ from automl_system.graph.orchestrator import build_graph
 from automl_system.llm.client import LLMClient
 from automl_system.memory import episodic
 from automl_system.memory.episodic import create_session, initialize_session_document
-from automl_system.state.session import SessionState
+from automl_system.pipeline.unsupervised import UNSUPERVISED_TASK_TYPES as _UNSUPERVISED_TASK_TYPES
+from automl_system.state.session import SessionState, _copy_data
 from automl_system.utils.dataset_profile import compute_dataset_profile
+from automl_system.utils.decision_log import log_decision
 from automl_system.utils.phase1_summary import (
     TARGET_CONFIDENCE_THRESHOLD,
     build_phase1_summary,
@@ -51,6 +57,12 @@ from automl_system.utils.phase1_summary import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# In-pipeline AutoGluon/FLAML comparison runs (AUTOML_BENCHMARK_TIME_LIMIT) are meant
+# for benchmark experiments; they add minutes to every app run. Off for the app
+# unless APP_RUN_COMPETITORS=true. experiments/benchmark.py is unaffected.
+if not config.APP_RUN_COMPETITORS:
+    config.AUTOML_BENCHMARK_TIME_LIMIT = 0
 
 app = FastAPI(title="AutoML API", version="1.0.0")
 
@@ -92,6 +104,7 @@ _PHASE_NODE_META: dict[str, tuple[int, str]] = {
     "phase4_planning": (4, "Execution Planning"),
     "split_data": (3, "Train/Test Split"),
     "train_evaluate": (5, "Model Training"),
+    "unsupervised_train": (5, "Unsupervised Execution"),
     "interpret_results": (5, "Result Interpretation"),
     "threshold_check": (6, "Threshold Check"),
     "diagnose_failure": (6, "Failure Diagnosis"),
@@ -124,8 +137,22 @@ def _load_dataframe(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _json_safe(value: Any) -> Any:
+    """NaN/inf → None: json.dumps writes them as bare NaN/Infinity, which the browser's
+    JSON.parse rejects — the whole event (e.g. the final one) would be silently dropped."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.floating):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def _sse(data: dict) -> str:
-    return f"data: {json.dumps(data, default=str)}\n\n"
+    return f"data: {json.dumps(_json_safe(data), default=str, allow_nan=False)}\n\n"
 
 
 def _extract_chart_data(df: pd.DataFrame, session: SessionState) -> dict:
@@ -190,6 +217,7 @@ def _pipeline_worker(
     user_instructions: str,
     session_dict: dict | None,
     original_filename: str | None = None,
+    task_type: str | None = None,
 ) -> None:
     """Full pipeline worker; emits SSE-shaped events via _RUNS[run_id]['q']."""
     reg = _RUNS[run_id]
@@ -231,107 +259,141 @@ def _pipeline_worker(
         session.dataset_profile = compute_dataset_profile(df)
         session.phase_status_map["phase1"] = "running"
 
+        # UI mode toggle sets task_type explicitly for unsupervised runs — takes
+        # precedence over whatever the session already carries from a prior turn.
+        if task_type:
+            session.task_config = dict(session.task_config or {})
+            session.task_config["task_type"] = task_type
+
         # ── Phase 1 — Task & Data Understanding ────────────────────────────────
         emit({"type": "phase_start", "phase": 1, "phase_name": "Task & Data Understanding"})
 
-        # Step 1: Parse intent — classify state + extract target
-        intent = parse_user_intent(user_line, list(df.columns), session)
-        session.intent_result = intent
-        state = str(intent.get("state") or "in_scope")
-
-        if intent.get("llm_unavailable"):
-            emit({"type": "message", "phase": 1,
-                  "text": "The AI service is temporarily unavailable. Please try again in a moment."})
-            session.phase_status_map["phase1"] = "failed"
-            emit({"type": "phase_done", "phase": 1, "status": "failed"})
-            emit({"type": "final", "script_available": False,
-                  "report_available": False, "session": session.to_dict()})
-            return
-
-        # Non-in_scope states: show message and stop (no retry loop for research use)
-        if state in ("out_of_scope", "unrecognizable", "ambiguous"):
-            msg = str(intent.get("message") or
-                      "This system supports supervised ML (classification/regression) on tabular data.")
-            emit({"type": "message", "phase": 1, "text": msg})
-            session.phase_status_map["phase1"] = "failed"
-            emit({"type": "phase_done", "phase": 1, "status": "failed"})
-            emit({"type": "final", "script_available": False,
-                  "report_available": False, "session": session.to_dict()})
-            return
-
-        # Step 2: Resolve target column — intent may have extracted it already.
-        # target_confidence stays 1.0 when the user already named a valid column
-        # explicitly (nothing to resolve); otherwise it reflects how sure the
-        # name-heuristic / LLM inference was.
-        target_pre_specified = bool(session.task_config.get("target_column")) and \
-            str(session.task_config.get("target_column")) in df.columns
-        target_confidence = 1.0
-        target_resolution_note: str | None = None
-        if not target_pre_specified:
-            _resolved, msg, target_confidence, _extra = resolve_target_from_data(session, df)
-            target_resolution_note = str(msg) if msg else None
-
-        if not session.task_config.get("target_column") or \
-                str(session.task_config["target_column"]) not in df.columns:
-            emit({"type": "message", "phase": 1,
-                  "text": "Could not identify a target column. Please include the target column name in your prompt."})
-            session.phase_status_map["phase1"] = "failed"
-            emit({"type": "phase_done", "phase": 1, "status": "failed"})
-            emit({"type": "final", "script_available": False,
-                  "report_available": False, "session": session.to_dict()})
-            return
-
-        # Ambiguous target: don't silently proceed on a low-confidence guess —
-        # stop and ask the user to confirm the column explicitly.
-        if target_confidence < TARGET_CONFIDENCE_THRESHOLD:
-            candidate = session.task_config.get("target_column")
+        is_unsupervised = str(session.task_config.get("task_type") or "").lower() in _UNSUPERVISED_TASK_TYPES
+        if is_unsupervised:
+            # UI already picked the mode — no target column to find, so skip
+            # intent parsing and target/metric resolution entirely. Falls through
+            # to the shared LangGraph invocation below, same as the supervised
+            # path — the orchestrator forks on task_type right after basic_cleaning.
+            session.task_config["goal"] = user_line
+            log_decision(
+                session, step="Phase 1", action="unsupervised_mode_selected",
+                rationale=(
+                    f"UI set task_type={session.task_config['task_type']!r} via the mode toggle — "
+                    "skipping intent parsing and target resolution."
+                ),
+            )
             emit({"type": "message", "phase": 1,
                   "text": (
-                      f"I inferred **`{candidate}`** as the target column, but with low confidence "
-                      f"({target_confidence:.0%}). Please confirm by explicitly naming the target "
-                      "column in your prompt (e.g. \"predict `column_name`\") and try again."
+                      f"Mode: **{session.task_config['task_type']}** — no target column needed. "
+                      "Skipping target resolution."
                   )})
-            session.phase_status_map["phase1"] = "failed"
-            emit({"type": "phase_done", "phase": 1, "status": "failed"})
-            emit({"type": "final", "script_available": False,
-                  "report_available": False, "session": session.to_dict()})
-            return
+            initialize_session_document(
+                session_id=session.decisions_log_id or "",
+                task_config=session.task_config,
+                dataset_state_pointer=file_path,
+            )
+            session.phase_status_map["phase1"] = "done"
+            emit({"type": "phase_done", "phase": 1, "status": "done"})
 
-        # Step 3: Validate target + select metric
-        _res, msg, _conf, _extra = run_task_classification(session, df)
-        if session.task_config.get("_pipeline_stop") == "single_value_target":
-            emit({"type": "message", "phase": 1, "text": msg})
-            session.terminated = True
-            session.phase_status_map["phase1"] = "failed"
-            emit({"type": "phase_done", "phase": 1, "status": "failed"})
-            emit({"type": "final", "script_available": False,
-                  "report_available": False, "session": session.to_dict()})
-            return
+        else:
+            # Step 1: Parse intent — classify state + extract target
+            intent = parse_user_intent(user_line, list(df.columns), session)
+            session.intent_result = intent
+            state = str(intent.get("state") or "in_scope")
 
-        # Step 4: Full profile with target + initialize memory document
-        resolved_target = session.task_config.get("target_column")
-        session.dataset_profile = compute_dataset_profile(df, target_column=resolved_target)
-        session.task_config["goal"] = user_line
-        initialize_session_document(
-            session_id=session.decisions_log_id or "",
-            task_config=session.task_config,
-            dataset_state_pointer=file_path,
-        )
+            if intent.get("llm_unavailable"):
+                emit({"type": "message", "phase": 1,
+                      "text": "The AI service is temporarily unavailable. Please try again in a moment."})
+                session.phase_status_map["phase1"] = "failed"
+                emit({"type": "phase_done", "phase": 1, "status": "failed"})
+                emit({"type": "final", "script_available": False,
+                      "report_available": False, "session": session.to_dict()})
+                return
 
-        # Step 5: Structured problem/dataset understanding (no new LLM calls —
-        # assembled from facts already resolved above) — consumed by the UI
-        # and available to Phase 2+ via session.problem_summary.
-        summary = build_phase1_summary(
-            session=session, df=df,
-            target_confidence=target_confidence,
-            target_resolution_note=target_resolution_note,
-            source_filename=filename,
-        )
-        session.problem_summary = summary
+            # Non-in_scope states: show message and stop (no retry loop for research use)
+            if state in ("out_of_scope", "unrecognizable", "ambiguous"):
+                msg = str(intent.get("message") or
+                          "This system supports supervised ML (classification/regression) on tabular data.")
+                emit({"type": "message", "phase": 1, "text": msg})
+                session.phase_status_map["phase1"] = "failed"
+                emit({"type": "phase_done", "phase": 1, "status": "failed"})
+                emit({"type": "final", "script_available": False,
+                      "report_available": False, "session": session.to_dict()})
+                return
 
-        session.phase_status_map["phase1"] = "done"
-        emit({"type": "phase1_summary", "phase": 1, "data": summary})
-        emit({"type": "phase_done", "phase": 1, "status": "done"})
+            # Step 2: Resolve target column — intent may have extracted it already.
+            # target_confidence stays 1.0 when the user already named a valid column
+            # explicitly (nothing to resolve); otherwise it reflects how sure the
+            # name-heuristic / LLM inference was.
+            target_pre_specified = bool(session.task_config.get("target_column")) and \
+                str(session.task_config.get("target_column")) in df.columns
+            target_confidence = 1.0
+            target_resolution_note: str | None = None
+            if not target_pre_specified:
+                _resolved, msg, target_confidence, _extra = resolve_target_from_data(session, df)
+                target_resolution_note = str(msg) if msg else None
+
+            if not session.task_config.get("target_column") or \
+                    str(session.task_config["target_column"]) not in df.columns:
+                emit({"type": "message", "phase": 1,
+                      "text": "Could not identify a target column. Please include the target column name in your prompt."})
+                session.phase_status_map["phase1"] = "failed"
+                emit({"type": "phase_done", "phase": 1, "status": "failed"})
+                emit({"type": "final", "script_available": False,
+                      "report_available": False, "session": session.to_dict()})
+                return
+
+            # Ambiguous target: don't silently proceed on a low-confidence guess —
+            # stop and ask the user to confirm the column explicitly.
+            if target_confidence < TARGET_CONFIDENCE_THRESHOLD:
+                candidate = session.task_config.get("target_column")
+                emit({"type": "message", "phase": 1,
+                      "text": (
+                          f"I inferred **`{candidate}`** as the target column, but with low confidence "
+                          f"({target_confidence:.0%}). Please confirm by explicitly naming the target "
+                          "column in your prompt (e.g. \"predict `column_name`\") and try again."
+                      )})
+                session.phase_status_map["phase1"] = "failed"
+                emit({"type": "phase_done", "phase": 1, "status": "failed"})
+                emit({"type": "final", "script_available": False,
+                      "report_available": False, "session": session.to_dict()})
+                return
+
+            # Step 3: Validate target + select metric
+            _res, msg, _conf, _extra = run_task_classification(session, df)
+            if session.task_config.get("_pipeline_stop") == "single_value_target":
+                emit({"type": "message", "phase": 1, "text": msg})
+                session.terminated = True
+                session.phase_status_map["phase1"] = "failed"
+                emit({"type": "phase_done", "phase": 1, "status": "failed"})
+                emit({"type": "final", "script_available": False,
+                      "report_available": False, "session": session.to_dict()})
+                return
+
+            # Step 4: Full profile with target + initialize memory document
+            resolved_target = session.task_config.get("target_column")
+            session.dataset_profile = compute_dataset_profile(df, target_column=resolved_target)
+            session.task_config["goal"] = user_line
+            initialize_session_document(
+                session_id=session.decisions_log_id or "",
+                task_config=session.task_config,
+                dataset_state_pointer=file_path,
+            )
+
+            # Step 5: Structured problem/dataset understanding (no new LLM calls —
+            # assembled from facts already resolved above) — consumed by the UI
+            # and available to Phase 2+ via session.problem_summary.
+            summary = build_phase1_summary(
+                session=session, df=df,
+                target_confidence=target_confidence,
+                target_resolution_note=target_resolution_note,
+                source_filename=filename,
+            )
+            session.problem_summary = summary
+
+            session.phase_status_map["phase1"] = "done"
+            emit({"type": "phase1_summary", "phase": 1, "data": summary})
+            emit({"type": "phase_done", "phase": 1, "status": "done"})
 
         # ── LangGraph phases 2–7 ───────────────────────────────────────────────
         graph = build_graph()
@@ -352,6 +414,7 @@ def _pipeline_worker(
 
         current_phase: int = 0
         seen_msg_len: int = 0
+        latest_split: dict[str, Any] | None = None
 
         while True:
             try:
@@ -373,6 +436,10 @@ def _pipeline_worker(
             node_name, node_out = payload
             if not isinstance(node_out, dict):
                 continue
+
+            # The downloadable script reads this exact split (train.csv / test.csv).
+            if node_name == "split_data":
+                latest_split = ((node_out.get("checkpoints") or {}).get("after_split")) or latest_split
 
             meta = _PHASE_NODE_META.get(node_name)
             if not meta:
@@ -430,6 +497,8 @@ def _pipeline_worker(
                               "metric_is_lower_better": exec_res.get("metric_is_lower_better") or False,
                               "best_model_metrics": exec_res.get("best_model_metrics") or {},
                               "elimination_audit": exec_res.get("elimination_audit") or {},
+                              "shap_summary": exec_res.get("shap_summary") or {},
+                              "router_stats": session.preprocessing_meta.get("router_stats") or {},
                           }})
 
         # Close the last open phase
@@ -449,6 +518,12 @@ def _pipeline_worker(
             sp.write_text(script_text, encoding="utf-8")
             script_path = str(sp)
             reg["script_path"] = script_path
+            for part in ("train", "test"):
+                frame = (latest_split or {}).get(part)
+                if isinstance(frame, pd.DataFrame):
+                    dp = Path(tempfile.gettempdir()) / f"automl_{part}_{run_id}.csv"
+                    frame.to_csv(dp, index=False)
+                    reg[f"{part}_path"] = str(dp)
 
         # ── Stakeholder PDF ────────────────────────────────────────────────────
         pdf_path: str | None = None
@@ -463,6 +538,7 @@ def _pipeline_worker(
         emit({
             "type": "final",
             "script_available": bool(script_path),
+            "script_validation": session.script_validation or {},
             "report_available": bool(pdf_path and Path(pdf_path).is_file()),
             "best_model": str(best_model or ""),
             "iterations": int(session.iteration_count or 0),
@@ -545,6 +621,10 @@ class RunRequest(BaseModel):
     instructions: str
     session: Optional[dict] = None
     filename: Optional[str] = None
+    # Set by the frontend's mode toggle for "Find patterns / reduce dimensions"
+    # runs — "clustering" | "dimensionality_reduction". Omitted/None for the
+    # default "Predict a target" mode, which keeps today's LLM-inferred flow.
+    task_type: Optional[str] = None
 
 
 @app.post("/run")
@@ -565,14 +645,74 @@ async def start_run(request: RunRequest):
         "done": False,
     }
 
-    t = threading.Thread(
-        target=_pipeline_worker,
-        args=(run_id, request.file_path, request.instructions, request.session, request.filename),
-        daemon=True,
-    )
-    t.start()
+    # Each run executes in its own process: native ML/GPU libraries can crash the
+    # process that ran them (seen: silently, seconds after the run finished), and that
+    # must never take the API server down. A relay thread forwards the child's events.
+    args = (run_id, request.file_path, request.instructions, request.session, request.filename, request.task_type)
+    events = _MP.Queue()
+    proc = _MP.Process(target=_run_in_child, args=(events, args), daemon=True, name=f"pipeline-{run_id[:8]}")
+    proc.start()
+    threading.Thread(target=_relay_child_events, args=(run_id, proc, events), daemon=True).start()
 
     return {"run_id": run_id}
+
+
+_MP = multiprocessing.get_context("spawn")
+_REGISTRY_KEYS = ("script_path", "pdf_path", "train_path", "test_path")
+
+
+class _ChildEventQueue:
+    """Stand-in for the run's queue inside the child process. Forwards events to the
+    parent, preceded on "final" by the artifact paths the parent's downloads need."""
+
+    def __init__(self, events: Any, reg: dict):
+        self._events, self._reg = events, reg
+
+    def put(self, event: dict) -> None:
+        if isinstance(event, dict) and event.get("type") == "final":
+            self._events.put({"type": "__registry__",
+                              "data": {k: self._reg.get(k) for k in _REGISTRY_KEYS}})
+        # Events are pickled across the process boundary: drop private non-data entries
+        # (e.g. "_fitted_estimator" model objects in the Phase 5 comparison table).
+        self._events.put(_copy_data(event))
+
+
+def _run_in_child(events: Any, args: tuple) -> None:
+    """Child-process entry point: run the normal worker with a forwarding queue."""
+    run_id = args[0]
+    reg: dict[str, Any] = {"script_path": None, "pdf_path": None, "session": None, "done": False}
+    reg["q"] = _ChildEventQueue(events, reg)
+    _RUNS[run_id] = reg
+    _pipeline_worker(*args)
+
+
+def _relay_child_events(run_id: str, proc: Any, events: Any) -> None:
+    """Parent side: move child events into the run's queue; report an early child death."""
+    reg = _RUNS[run_id]
+    ended = False
+    while not ended:
+        try:
+            event = events.get(timeout=1.0)
+        except _queue.Empty:
+            if proc.is_alive():
+                continue
+            break
+        except (EOFError, OSError):
+            break
+        if event.get("type") == "__registry__":
+            reg.update({k: v for k, v in (event.get("data") or {}).items() if v})
+            continue
+        if event.get("type") in ("final", "__end__"):
+            reg["done"] = True
+        ended = event.get("type") == "__end__"
+        reg["q"].put(event)
+    if not ended:
+        logger.error("Pipeline process for run %s exited unexpectedly (exit code %s)", run_id, proc.exitcode)
+        reg["q"].put({"type": "error",
+                      "message": "The pipeline process stopped unexpectedly. Check the server logs."})
+        reg["done"] = True
+        reg["q"].put({"type": "__end__"})
+    proc.join(timeout=10)
 
 
 @app.get("/stream/{run_id}")
@@ -614,16 +754,40 @@ async def stream_events(run_id: str):
     )
 
 
+_RUN_ID_RE = re.compile(r"[0-9a-fA-F-]{36}")
+
+
+def _run_artifact(run_id: str, key: str, filename: str) -> str | None:
+    """Path of a saved run artifact. Falls back to its fixed temp-file name when the
+    in-memory registry no longer has the run (e.g. after a server restart)."""
+    path = (_RUNS.get(run_id) or {}).get(key)
+    if path and Path(path).is_file():
+        return path
+    if _RUN_ID_RE.fullmatch(run_id):
+        candidate = Path(tempfile.gettempdir()) / filename
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 @app.get("/download/script/{run_id}")
 async def download_script(run_id: str):
     """Download the generated automl_pipeline.py for this run."""
-    reg = _RUNS.get(run_id)
-    if not reg:
-        raise HTTPException(status_code=404, detail="Run not found.")
-    sp = reg.get("script_path")
-    if not sp or not Path(sp).is_file():
+    sp = _run_artifact(run_id, "script_path", f"automl_pipeline_{run_id}.py")
+    if not sp:
         raise HTTPException(status_code=404, detail="Pipeline script not yet available.")
     return FileResponse(sp, filename="automl_pipeline.py", media_type="text/x-python")
+
+
+@app.get("/download/split/{run_id}/{part}")
+async def download_split(run_id: str, part: str):
+    """Download the train.csv / test.csv split the pipeline script expects."""
+    if part not in ("train", "test"):
+        raise HTTPException(status_code=404, detail="Unknown split part.")
+    dp = _run_artifact(run_id, f"{part}_path", f"automl_{part}_{run_id}.csv")
+    if not dp:
+        raise HTTPException(status_code=404, detail="Split not available for this run.")
+    return FileResponse(dp, filename=f"{part}.csv", media_type="text/csv")
 
 
 @app.get("/download/report/{run_id}")

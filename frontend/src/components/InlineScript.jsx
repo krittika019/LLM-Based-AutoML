@@ -78,9 +78,33 @@ function highlightLine(text) {
   return result
 }
 
+// ── Sandbox verification badge ────────────────────────────────────────────────
+
+const VERIFY_LABELS = {
+  verified: '✓ Verified',
+  score_mismatch: '⚠ Score differs',
+  failed: '✕ Not runnable',
+  skipped: 'Not verified',
+}
+
+function verifyTone(status) {
+  if (status === 'verified') return 'ok'
+  if (status === 'skipped') return 'muted'
+  return status === 'failed' ? 'bad' : 'warn'
+}
+
+function VerifyBadge({ validation }) {
+  if (!validation?.status) return null
+  return (
+    <span className={`script-verify-badge ${verifyTone(validation.status)}`} title={validation.message}>
+      {VERIFY_LABELS[validation.status] ?? validation.status}
+    </span>
+  )
+}
+
 // ── InlineScript component ────────────────────────────────────────────────────
 
-export default function InlineScript({ runId, visible }) {
+export default function InlineScript({ runId, visible, validation, fallbackCode }) {
   const [code, setCode]           = useState(null)
   const [loading, setLoading]     = useState(false)
   const [fetchError, setFetchError] = useState('')
@@ -97,8 +121,14 @@ export default function InlineScript({ runId, visible }) {
         return r.text()
       })
       .then(text => { setCode(text); setLoading(false) })
-      .catch(err => { setFetchError(err.message); setLoading(false) })
-  }, [visible, runId, code])
+      .catch(err => {
+        // The final event already carries the script — show it if the download failed
+        // (e.g. backend restarted and lost its run registry).
+        if (fallbackCode) setCode(fallbackCode)
+        else setFetchError(err.message)
+        setLoading(false)
+      })
+  }, [visible, runId, code, fallbackCode])
 
   // Reset when runId changes
   useEffect(() => { setCode(null); setFetchError('') }, [runId])
@@ -119,7 +149,10 @@ export default function InlineScript({ runId, visible }) {
     <div className="inline-script-wrap">
       {/* Header bar */}
       <div className="inline-script-header">
-        <span className="inline-script-title">pipeline.py</span>
+        <span className="inline-script-title">
+          pipeline.py
+          <VerifyBadge validation={validation} />
+        </span>
         <div className="inline-script-actions">
           <button
             className={`icon-btn${copied ? ' copied' : ''}`}
@@ -139,8 +172,28 @@ export default function InlineScript({ runId, visible }) {
               ⬇
             </a>
           )}
+          {runId && ['train', 'test'].map(part => (
+            <a
+              key={part}
+              href={`/download/split/${runId}/${part}`}
+              download={`${part}.csv`}
+              className="split-download"
+              title={`Download ${part}.csv — the exact split the script expects`}
+            >
+              {part}.csv
+            </a>
+          ))}
         </div>
       </div>
+
+      {validation?.message && (
+        <div className={`script-verify-note ${verifyTone(validation.status)}`}>
+          {validation.message}
+          {validation.source === 'assembled' && ' · built from the recorded pipeline steps'}
+          {validation.backend && ` · ${validation.backend} sandbox`}
+          {validation.attempts > 1 && ` · ${validation.attempts} attempts`}
+        </div>
+      )}
 
       {/* Code body */}
       <div className="inline-script-body">

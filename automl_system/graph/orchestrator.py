@@ -5,6 +5,8 @@ LangGraph workflow: Phase 2 planning + Phase 3 preprocessing + Phase 4/5 executi
 from __future__ import annotations
 
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pandas as pd
@@ -19,11 +21,14 @@ from automl_system.agents.preprocessing_planner import make_preprocessing_plan
 from automl_system.agents.report_generator import generate_report
 from automl_system.pipeline.cleaning import basic_clean
 from automl_system.pipeline.code_generator import generate_pipeline_script
+from automl_system.pipeline.script_validation import STATUS_VERIFIED, validate_and_repair_script
 from automl_system.pipeline.deep_cleaning import deep_clean
+from automl_system.pipeline.diagnosis_probes import format_evidence, run_probes
 from automl_system.pipeline.eda import run_eda
 from automl_system.pipeline.execution import MissingTargetError, run_pipeline, split_dataframe
 from automl_system.pipeline.feature_engineering import engineer_features
 from automl_system.pipeline.feature_selection import select_features
+from automl_system.pipeline.unsupervised import UNSUPERVISED_TASK_TYPES, run_unsupervised_pipeline
 from automl_system.pipeline.verification import (
     STEP_BASIC_CLEAN,
     STEP_DEEP_CLEANING,
@@ -36,6 +41,7 @@ from automl_system.pipeline.verification import (
 )
 from automl_system.state.session import SessionState
 from automl_system.utils.dataset_profile import compute_dataset_profile
+from automl_system.utils.decision_log import log_decision
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +167,59 @@ def node_basic_cleaning(state: OrchestratorState) -> OrchestratorState:
         summary += f"- **Ambiguous cases (LLM guidance):** {amb[:1200]}\n"
     msgs.append(summary)
     return {"session": session.to_dict(), "df": out, "checkpoints": ck, "messages": msgs}
+
+
+def route_after_basic_cleaning(state: OrchestratorState) -> str:
+    """Unsupervised runs (no target column) fork here — before split_data, which
+    hard-requires a target. They skip straight to their own train node and never
+    rejoin the supervised path (no EDA/feature-selection/deep-cleaning/threshold
+    loop in v1 — see node_unsupervised_train)."""
+    session = _session(state)
+    task_type = str((session.task_config or {}).get("task_type") or "").lower()
+    if task_type in UNSUPERVISED_TASK_TYPES:
+        return "unsupervised_train"
+    return "split_data"
+
+
+def node_unsupervised_train(state: OrchestratorState) -> OrchestratorState:
+    """Clustering / dimensionality-reduction path: no split, no CV, no threshold
+    loop — runs once on the full (basic-cleaned) dataset and reports internal
+    validation metrics. v1 scope; see run_unsupervised_pipeline's docstring."""
+    session = _session(state)
+    df = state.get("df")
+    if df is None:
+        raise ValueError("unsupervised_train requires state['df']")
+    msgs = list(state.get("messages") or [])
+    calls0 = LLMClient.call_count
+
+    results = run_unsupervised_pipeline(df, None, session)
+    session.unsupervised_results = results
+
+    if results.get("status") == "ok":
+        algo = results.get("algorithm")
+        if algo == "kmeans":
+            summary = (
+                f"### Phase 5 — Unsupervised execution\n\n"
+                f"**Algorithm:** K-Means | **k:** {results.get('best_k')} | "
+                f"**Silhouette:** {results.get('silhouette_score')} | "
+                f"**Davies-Bouldin:** {results.get('davies_bouldin_score')}\n\n"
+                f"Cluster sizes: {results.get('cluster_sizes')}"
+            )
+        else:
+            summary = (
+                f"### Phase 5 — Unsupervised execution\n\n"
+                f"**Algorithm:** PCA | **Components:** {results.get('n_components')} | "
+                f"**Variance retained:** {round((results.get('cumulative_variance') or [0])[-1] * 100, 1)}%"
+            )
+    else:
+        summary = (
+            f"### Phase 5 — Unsupervised execution\n\n"
+            f"> ⚠️ Did not complete: {results.get('reason')}"
+        )
+    msgs.append(summary)
+
+    _record_phase_calls(session, "unsupervised_train", calls0)
+    return {"session": session.to_dict(), "df": df, "messages": msgs}
 
 
 def node_split_data(state: OrchestratorState) -> OrchestratorState:
@@ -303,7 +362,20 @@ def node_feature_engineering(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     calls0 = LLMClient.call_count
     df_test_in = state.get("df_test")
-    result = engineer_features(state["df"], session, df_test=df_test_in)
+    # Original-scale rows for CV-gated FE: the split after feature selection
+    # (which only drops columns), i.e. the same rows before deep cleaning.
+    split_ck = (state.get("checkpoints") or {}).get("after_split") or {}
+    keep = list((session.preprocessing_meta or {}).get("feature_selection_columns") or [])
+    def _kept(frame: pd.DataFrame | None) -> pd.DataFrame | None:
+        if frame is None:
+            return None
+        cols = [c for c in keep if c in frame.columns]
+        return frame[cols].copy() if cols else frame.copy()
+
+    raw_train, raw_test = _kept(split_ck.get("train")), _kept(split_ck.get("test"))
+    result = engineer_features(
+        state["df"], session, df_test=df_test_in, raw_train=raw_train, raw_test=raw_test
+    )
     df, df_test = result if df_test_in is not None else (result, None)
     ck = dict(state.get("checkpoints") or {})
     ck["after_feature_engineering"] = {"train": df.copy(), "test": df_test.copy() if df_test is not None else None}
@@ -362,7 +434,8 @@ def node_verification(state: OrchestratorState) -> OrchestratorState:
         # Verification passed — the retry-rewind checkpoints (full dataframe copies at
         # every preprocessing stage) are never read again for the rest of the run.
         # Drop them now instead of carrying several dataframe copies through Phase 5-7.
-        out["checkpoints"] = {}
+        # Keep only the raw train/test split: Phase 7 runs the final script against it.
+        out["checkpoints"] = {k: v for k, v in ck.items() if k == "after_split"}
         return out
 
     if fail_step:
@@ -756,11 +829,23 @@ def node_diagnose_failure(state: OrchestratorState) -> OrchestratorState:
             "df": state.get("df"), "execution_results": results, "diagnosis": diagnosis,
         }
 
-    # General path: LLM-based failure diagnosis
-    diagnosis = diagnose_failure(session, results)
+    # General path: controlled experiments first, then the LLM diagnoses with that evidence
+    probe_report = None
+    if config.DIAG_PROBES and isinstance(state.get("df"), pd.DataFrame):
+        try:
+            split_ck = (state.get("checkpoints") or {}).get("after_split") or {}
+            probe_report = run_probes(state["df"], split_ck.get("train"), session, results)
+            msgs.append(
+                f"### Phase 6 — Diagnosis experiments ({probe_report.get('seconds', 0):.0f}s)\n\n"
+                + format_evidence(probe_report).replace("\n- ", "\n\n- ")
+            )
+        except Exception as exc:
+            logger.warning("Diagnosis probes failed (continuing with LLM-only diagnosis): %s", exc)
+    diagnosis = diagnose_failure(session, results, probe_report)
+    note = " _(chosen from the experiment evidence)_" if diagnosis.get("overridden_by_evidence") else ""
     msgs.append(
         "**Failure diagnosis:** "
-        f"{diagnosis.get('failure_type')} → {diagnosis.get('responsible_phase')}. "
+        f"{diagnosis.get('failure_type')} → {diagnosis.get('responsible_phase')}{note}. "
         f"Proposed fix: {diagnosis.get('proposed_fix')}"
     )
 
@@ -845,15 +930,60 @@ def node_targeted_revision(state: OrchestratorState) -> OrchestratorState:
 
 def node_phase7_final_output(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
-    all_results = list(session.all_results or [])
     calls0 = LLMClient.call_count
+
+    # Unsupervised runs never populate all_results/execution_results (no
+    # split, no CV, no test_score) — the supervised scoring/script logic below
+    # doesn't apply and would misreport an "ok" clustering run as failed.
+    task_type = str((session.task_config or {}).get("task_type") or "").lower()
+    if task_type in UNSUPERVISED_TASK_TYPES:
+        report_md = generate_report(session, [])
+        session.final_report_markdown = report_md
+        session.final_pipeline_script = ""
+        session.final_comparison_table = []
+        session.is_complete = True
+        msgs = list(state.get("messages") or [])
+        msgs.append("### Phase 7 — Final report\n\n" + (report_md or "_Report unavailable._"))
+        _record_phase_calls(session, "report_generation", calls0)
+        logger.info(LLMClient.phase_call_stats_message("Phase 7 Final report", calls0))
+        token_tbl = dict(session.token_cost_table or {})
+        token_tbl["_total"] = sum(v for k, v in token_tbl.items() if not k.startswith("_"))
+        token_tbl["_cache_hits"] = LLMClient.cache_hits
+        session.token_cost_table = token_tbl
+        return {
+            "messages": msgs,
+            "session": session.to_dict(),
+            "df": state.get("df"),
+            "execution_results": {"token_cost_table": token_tbl},
+            "phase7_done": True,
+        }
+
+    all_results = list(session.all_results or [])
 
     # ── Step 1: Explanation Report ─────────────────────────────────────────────
     # Scenario: pipeline failed completely (no successful models)
     failed_completely = not any(
         isinstance(r.get("best_test_score"), (int, float)) for r in all_results
     )
-    report_md = generate_report(session, all_results)
+    # ── Step 3 (started early): Consolidated Code Output + sandbox validation ──
+    # The script is generated first, then executed/repaired in a background thread
+    # while the report is written, so validation adds little wall-clock time.
+    df_final = state.get("df")
+    target_col = str((session.task_config or {}).get("target_column") or "")
+    feature_columns = (
+        [c for c in df_final.columns if c != target_col] if isinstance(df_final, pd.DataFrame) else None
+    )
+    split_ck = (state.get("checkpoints") or {}).get("after_split") or {}
+    script, script_source = generate_pipeline_script(
+        session, feature_columns=feature_columns, df_raw_train=split_ck.get("train")
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        validation_future = pool.submit(
+            validate_and_repair_script, session, script,
+            split_ck.get("train"), split_ck.get("test"), script_source,
+        )
+        report_md = generate_report(session, all_results)
+        script, validation = validation_future.result()
 
     # ── Step 2: Final Results Presentation ────────────────────────────────────
     # Compile all rows from all iterations, tagged with iteration number
@@ -908,11 +1038,19 @@ def node_phase7_final_output(state: OrchestratorState) -> OrchestratorState:
             (i for i, r in enumerate(merged) if r.get("is_best")), None
         )
 
-    # ── Step 3: Consolidated Code Output ──────────────────────────────────────
-    script = generate_pipeline_script(session)
-
     session.final_report_markdown = report_md
     session.final_pipeline_script = script
+    session.script_validation = validation
+    log_decision(
+        session,
+        step="Phase 7 - Script validation",
+        action=f"script_validation:{validation.get('status')}",
+        rationale=str(validation.get("message") or ""),
+        attempts=validation.get("attempts"),
+        backend=validation.get("backend"),
+        reproduced_score=validation.get("reproduced_score"),
+        reported_score=validation.get("reported_score"),
+    )
     session.final_comparison_table = merged
 
     # ── Mark session complete ─────────────────────────────────────────────────
@@ -935,6 +1073,15 @@ def node_phase7_final_output(state: OrchestratorState) -> OrchestratorState:
         )
 
     # Final comparison table is displayed by ModelTable in the frontend; no markdown needed here.
+
+    v_status = validation.get("status")
+    v_icon = "✅" if v_status == STATUS_VERIFIED else "⏭️" if v_status == "skipped" else "⚠️"
+    v_where = f" in the `{validation.get('backend')}` sandbox" if validation.get("backend") else ""
+    v_tries = f" ({validation.get('attempts')} attempt(s))" if validation.get("attempts") else ""
+    msgs.append(
+        f"### Phase 7 — Script verification\n\n{v_icon} {validation.get('message') or 'Not validated.'}"
+        f"{v_where}{v_tries}"
+    )
 
     # Recommendation
     if best_idx is not None and valid_rows:
@@ -1034,26 +1181,54 @@ def route_after_verification(state: OrchestratorState) -> str:
     return state.get("retry_target") or "phase4_planning"
 
 
+def _timed(name: str, fn):
+    """Wrap a graph node: accumulate its wall-clock seconds in session.phase_timings."""
+
+    def wrapper(state: OrchestratorState) -> OrchestratorState:
+        t0 = time.perf_counter()
+        out = fn(state)
+        elapsed = time.perf_counter() - t0
+        sess = (out or {}).get("session") or state.get("session")
+        if isinstance(sess, dict):
+            timings = dict(sess.get("phase_timings") or {})
+            timings[name] = round(timings.get(name, 0.0) + elapsed, 2)
+            out = {**(out or {}), "session": {**sess, "phase_timings": timings}}
+            if name == "phase7_final_output":
+                ranked = sorted(timings.items(), key=lambda kv: -kv[1])
+                logger.info("[TIMING] total %.0fs — %s", sum(timings.values()),
+                            ", ".join(f"{k}={v:.0f}s" for k, v in ranked))
+        logger.info("[TIMING] %s: %.1fs", name, elapsed)
+        return out
+
+    return wrapper
+
+
 def build_graph():
     workflow = StateGraph(OrchestratorState)
-    workflow.add_node("planning", node_planning)
-    workflow.add_node("basic_cleaning", node_basic_cleaning)
-    workflow.add_node("split_data", node_split_data)
-    workflow.add_node("eda", node_eda)
-    workflow.add_node("feature_selection", node_feature_selection)
-    workflow.add_node("deep_cleaning", node_deep_cleaning)
-    workflow.add_node("feature_engineering", node_feature_engineering)
-    workflow.add_node("verification", node_verification)
-    workflow.add_node("phase4_planning", node_phase4_planning)
-    workflow.add_node("train_evaluate", node_train_evaluate)
-    workflow.add_node("threshold_check", node_threshold_check)
-    workflow.add_node("diagnose_failure", node_diagnose_failure)
-    workflow.add_node("targeted_revision", node_targeted_revision)
-    workflow.add_node("phase7_final_output", node_phase7_final_output)
+    workflow.add_node("planning", _timed("planning", node_planning))
+    workflow.add_node("basic_cleaning", _timed("basic_cleaning", node_basic_cleaning))
+    workflow.add_node("split_data", _timed("split_data", node_split_data))
+    workflow.add_node("unsupervised_train", _timed("unsupervised_train", node_unsupervised_train))
+    workflow.add_node("eda", _timed("eda", node_eda))
+    workflow.add_node("feature_selection", _timed("feature_selection", node_feature_selection))
+    workflow.add_node("deep_cleaning", _timed("deep_cleaning", node_deep_cleaning))
+    workflow.add_node("feature_engineering", _timed("feature_engineering", node_feature_engineering))
+    workflow.add_node("verification", _timed("verification", node_verification))
+    workflow.add_node("phase4_planning", _timed("phase4_planning", node_phase4_planning))
+    workflow.add_node("train_evaluate", _timed("train_evaluate", node_train_evaluate))
+    workflow.add_node("threshold_check", _timed("threshold_check", node_threshold_check))
+    workflow.add_node("diagnose_failure", _timed("diagnose_failure", node_diagnose_failure))
+    workflow.add_node("targeted_revision", _timed("targeted_revision", node_targeted_revision))
+    workflow.add_node("phase7_final_output", _timed("phase7_final_output", node_phase7_final_output))
 
     workflow.set_entry_point("planning")
     workflow.add_edge("planning", "basic_cleaning")
-    workflow.add_edge("basic_cleaning", "split_data")
+    workflow.add_conditional_edges(
+        "basic_cleaning",
+        route_after_basic_cleaning,
+        {"split_data": "split_data", "unsupervised_train": "unsupervised_train"},
+    )
+    workflow.add_edge("unsupervised_train", "phase7_final_output")
     workflow.add_edge("split_data", "eda")
     workflow.add_edge("eda", "feature_selection")
     workflow.add_conditional_edges(
