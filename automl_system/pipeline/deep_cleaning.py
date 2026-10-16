@@ -49,7 +49,7 @@ def _llm_assignments(df: pd.DataFrame, session: SessionState, router_stats: Rout
     ambiguous_cols = columns_needing_llm(routes)
 
     out: dict[str, dict[str, str]] = {
-        col: build_partial_assignment(route)
+        col: {**build_partial_assignment(route), "source": route.tier if route.tier in ("rule", "stat") else "rule"}
         for col, route in routes.items()
     }
 
@@ -106,6 +106,7 @@ Return JSON: {{"columns": {{"col_name": {{
                         merged["encoding"] = str(v["encoding"])
                     if v.get("scaling"):
                         merged["scaling"] = str(v["scaling"])
+                    merged["source"] = "llm"
                     out[k] = merged
 
     # Ensure all non-target columns have a complete assignment
@@ -113,7 +114,7 @@ Return JSON: {{"columns": {{"col_name": {{
         if str(c) == str(target):
             continue
         if c not in out:
-            out[c] = _default_assignment(c, df[c])
+            out[c] = {**_default_assignment(c, df[c]), "source": "rule"}
 
     # ── Hard scenario checks after merge ──────────────────────────────────────
     deviations: list[dict[str, Any]] = []

@@ -404,6 +404,29 @@ def node_feature_engineering(state: OrchestratorState) -> OrchestratorState:
     }
 
 
+def _row_preview(raw_split: Any, df: Any, target: Any) -> dict[str, Any] | None:
+    """One training row before (raw split) and after preprocessing, for the run page."""
+    try:
+        raw = raw_split.get("train") if isinstance(raw_split, dict) else raw_split
+        if raw is None or df is None or len(df) == 0:
+            return None
+        idx = df.index[0]
+        if idx not in raw.index:
+            return None
+
+        def _cells(row: Any, limit: int) -> list[dict[str, str]]:
+            cols = [c for c in row.index if c != target][:limit]
+            return [{"column": str(c), "value": str(row[c])[:40]} for c in cols]
+
+        before, after = raw.loc[idx], df.loc[idx]
+        return {
+            "before": _cells(before, 10), "after": _cells(after, 12),
+            "n_before": int(raw.shape[1]), "n_after": int(df.shape[1]),
+        }
+    except Exception:
+        return None
+
+
 def node_verification(state: OrchestratorState) -> OrchestratorState:
     session = _session(state)
     df = state["df"]
@@ -430,6 +453,9 @@ def node_verification(state: OrchestratorState) -> OrchestratorState:
         lv["ok"] = True
         lv["message"] = raw_msg
         session.last_verification = lv
+        preview = _row_preview(ck.get("after_split"), df, session.task_config.get("target_column"))
+        if preview:
+            session.preprocessing_meta["row_preview"] = preview
         out["session"] = session.to_dict()
         # Verification passed — the retry-rewind checkpoints (full dataframe copies at
         # every preprocessing stage) are never read again for the rest of the run.
@@ -772,6 +798,20 @@ def node_threshold_check(state: OrchestratorState) -> OrchestratorState:
         msgs.append("→ User satisfaction flag set — proceeding to Phase 7.")
     # Exit condition 3 (fundamental_data_insufficiency) is detected in node_diagnose_failure
     # and routed to Phase 7 immediately via route_after_diagnosis
+
+    # Structured record of this check for the run page (Phase 6 details).
+    outcome = ("met" if ok else "max_iterations" if maxed else "early_exit" if early_exit_reason
+               else "no_improvement" if converged else "user_satisfied" if user_satisfied else "revise")
+    checks = list(session.preprocessing_meta.get("phase6_checks") or [])
+    checks.append({
+        "iteration": int(session.iteration_count),
+        "threshold": threshold if isinstance(threshold, (int, float)) else None,
+        "best": best if isinstance(best, (int, float)) else None,
+        "best_model": results.get("best_model_name"),
+        "outcome": outcome,
+        "reason": early_exit_reason or "",
+    })
+    session.preprocessing_meta["phase6_checks"] = checks
 
     return {
         "messages": msgs,
