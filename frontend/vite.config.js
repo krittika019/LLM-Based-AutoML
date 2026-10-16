@@ -13,6 +13,7 @@ export default defineConfig({
       '/run':    { target: 'http://localhost:8000', changeOrigin: true },
       '/stream': { target: 'http://localhost:8000', changeOrigin: true },
       '/download': { target: 'http://localhost:8000', changeOrigin: true },
+      '/predict': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
 })
