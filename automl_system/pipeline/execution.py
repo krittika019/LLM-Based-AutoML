@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 
+from automl_system.pipeline.predictor import bag_members
 from automl_system.pipeline.replay import combine_class_votes, safe_numeric_features
 from sklearn.ensemble import (
     ExtraTreesClassifier,
@@ -1040,6 +1041,44 @@ def _cv_from_plan(session: SessionState, y_train: pd.Series):
     return KFold(n_splits=folds, shuffle=True, random_state=42)
 
 
+def _binary_curves(y_true: pd.Series, p1: np.ndarray, max_roc_points: int = 80) -> dict[str, Any] | None:
+    """Compact ROC curve + threshold sweep for the Analytics page.
+
+    The sweep stores raw confusion counts at each cut-off (0.02 … 0.98), so the page can
+    recompute precision / recall / the confusion matrix for any threshold without the
+    probabilities themselves. p1 is the probability of the larger (sorted-last) label,
+    matching roc_auc_score's positive class.
+    """
+    try:
+        from sklearn.metrics import roc_curve
+
+        labels = sorted(pd.Series(y_true).dropna().unique().tolist())
+        if len(labels) != 2:
+            return None
+        y = (np.asarray(y_true) == labels[1]).astype(int)
+        p = np.asarray(p1, dtype=float)
+        fpr, tpr, _ = roc_curve(y, p)
+        if len(fpr) > max_roc_points:
+            keep = np.unique(np.linspace(0, len(fpr) - 1, max_roc_points).round().astype(int))
+            fpr, tpr = fpr[keep], tpr[keep]
+        sweep = []
+        for t in np.round(np.arange(0.02, 0.99, 0.02), 2):
+            pred = p >= t
+            sweep.append({
+                "t": float(t),
+                "tp": int(np.sum(pred & (y == 1))), "fp": int(np.sum(pred & (y == 0))),
+                "fn": int(np.sum(~pred & (y == 1))), "tn": int(np.sum(~pred & (y == 0))),
+            })
+        return {
+            "positive_label": str(labels[1]), "negative_label": str(labels[0]),
+            "roc": [[round(float(a), 4), round(float(b), 4)] for a, b in zip(fpr, tpr)],
+            "sweep": sweep,
+        }
+    except Exception as exc:  # display-only; never break evaluation
+        logger.warning("Curve computation failed: %s", exc)
+        return None
+
+
 def _compute_full_metrics(
     task_type: str,
     y_true: pd.Series,
@@ -1067,6 +1106,9 @@ def _compute_full_metrics(
                     out["pr_auc"]      = round(float(average_precision_score(y_true, p1)), 6)
                     out["log_loss"]    = round(float(log_loss(y_true, y_proba)), 6)
                     out["brier_score"] = round(float(brier_score_loss(y_true, p1)), 6)
+                    curves = _binary_curves(y_true, p1)
+                    if curves:
+                        out["curves"] = curves
                 else:
                     out["roc_auc"]  = round(float(roc_auc_score(y_true, y_proba, multi_class="ovr", average="weighted")), 6)
                     out["log_loss"] = round(float(log_loss(y_true, y_proba)), 6)
@@ -3197,6 +3239,7 @@ def run_pipeline(
             except Exception:
                 pass
 
+        _bag_models: list = []  # kept for prediction (Try the model)
         for _seed in [123, 456, 789]:
             try:
                 _b = _build_estimator(best_model_name, task_type, n_rows=n_rows)
@@ -3206,6 +3249,7 @@ def run_pipeline(
                 _sp["random_seed" if best_model_name == "CatBoost" else "random_state"] = _seed
                 _b.set_params(**_sp)
                 _b.fit(x_train, y_train)
+                _bag_models.append(_b)
                 _bag_preds.append(_b.predict(x_test).astype(float))
                 _bag_probas.append(_bag_proba(_b))
                 _bag_seeds_ok.append(_seed)
@@ -3249,6 +3293,7 @@ def run_pipeline(
                     "leakage_suspected": False,
                     "detailed_metrics": _compute_full_metrics(task_type, _y_test_orig, _bag_y, _bag_y_proba),
                     "_fitted_estimator": _bag_fitted,
+                    "_bag_members": bag_members(_bag_models),
                     "is_ensemble": True,
                     "model_spec": {
                         "kind": "bag",
@@ -3422,7 +3467,7 @@ Results table:
 {table_summary}
 
 Best model ({best_model_name}) full evaluation metrics:
-{best_full_metrics}
+{ {k: v for k, v in best_full_metrics.items() if k not in ("curves", "scatter_sample")} }
 
 Write a focused interpretation covering ALL five points below. 4-6 sentences total.
 

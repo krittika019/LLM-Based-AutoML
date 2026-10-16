@@ -9,6 +9,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import joblib
 import json
 import re
 import math
@@ -32,7 +33,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -50,6 +51,8 @@ from automl_system.pipeline.unsupervised import UNSUPERVISED_TASK_TYPES as _UNSU
 from automl_system.state.session import SessionState, _copy_data
 from automl_system.utils.dataset_profile import compute_dataset_profile
 from automl_system.utils.decision_log import log_decision
+from automl_system.utils.phase_details import build_phase_details
+from automl_system.pipeline.predictor import PredictUnavailable, Predictor, build_bundle
 from automl_system.utils.phase1_summary import (
     TARGET_CONFIDENCE_THRESHOLD,
     build_phase1_summary,
@@ -151,6 +154,15 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _phase_details_event(session: SessionState) -> dict | None:
+    """Per-phase run-page content; None if it cannot be built (never breaks the stream)."""
+    try:
+        return {"type": "phase_details", "data": build_phase_details(session)}
+    except Exception:
+        logger.warning("phase_details failed", exc_info=True)
+        return None
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(_json_safe(data), default=str, allow_nan=False)}\n\n"
 
@@ -209,6 +221,21 @@ def _inner_graph_worker(graph: Any, initial: dict, out_q: _queue.Queue) -> None:
         out_q.put(("done", None))
     except Exception:
         out_q.put(("error", traceback.format_exc()))
+
+
+def _save_model_bundle(run_id: str, session: SessionState, rows: list, raw_train: Any, reg: dict) -> str:
+    """Pickle the fitted model + preprocessing recipe for /predict. Returns a note ("" on success)."""
+    try:
+        bundle = build_bundle(session, rows, raw_train)
+        path = Path(tempfile.gettempdir()) / f"automl_model_{run_id}.joblib"
+        joblib.dump(bundle, path, compress=3)
+        reg["model_path"] = str(path)
+        return ""
+    except PredictUnavailable as exc:
+        return str(exc)
+    except Exception:
+        logger.warning("Saving the model bundle failed", exc_info=True)
+        return "the trained model could not be saved"
 
 
 def _pipeline_worker(
@@ -394,6 +421,8 @@ def _pipeline_worker(
             session.phase_status_map["phase1"] = "done"
             emit({"type": "phase1_summary", "phase": 1, "data": summary})
             emit({"type": "phase_done", "phase": 1, "status": "done"})
+            if (pd_ev := _phase_details_event(session)):
+                emit(pd_ev)
 
         # ── LangGraph phases 2–7 ───────────────────────────────────────────────
         graph = build_graph()
@@ -415,6 +444,7 @@ def _pipeline_worker(
         current_phase: int = 0
         seen_msg_len: int = 0
         latest_split: dict[str, Any] | None = None
+        latest_rows: list[dict] = []  # Phase 5 rows with fitted models (for Try the model)
 
         while True:
             try:
@@ -440,6 +470,8 @@ def _pipeline_worker(
             # The downloadable script reads this exact split (train.csv / test.csv).
             if node_name == "split_data":
                 latest_split = ((node_out.get("checkpoints") or {}).get("after_split")) or latest_split
+            if node_name == "train_evaluate":
+                latest_rows = list((node_out.get("execution_results") or {}).get("comparison_table") or []) or latest_rows
 
             meta = _PHASE_NODE_META.get(node_name)
             if not meta:
@@ -451,6 +483,8 @@ def _pipeline_worker(
                 if current_phase:
                     session.phase_status_map[f"phase{current_phase}"] = "done"
                     emit({"type": "phase_done", "phase": current_phase, "status": "done"})
+                    if "session" in node_out and (pd_ev := _phase_details_event(SessionState.from_dict(node_out["session"]))):
+                        emit(pd_ev)
                 current_phase = phase_num
                 session.phase_status_map[f"phase{current_phase}"] = "running"
                 phase_display = _PHASE_DISPLAY_NAMES.get(phase_num, f"Phase {phase_num}")
@@ -505,6 +539,9 @@ def _pipeline_worker(
         if current_phase:
             session.phase_status_map[f"phase{current_phase}"] = "done"
             emit({"type": "phase_done", "phase": current_phase, "status": "done"})
+        final_details = _phase_details_event(session)
+        if final_details:
+            emit(final_details)
 
         # ── Persist semantic memory (reference: updated only on fully completed successful run) ───
         exec_results = session.execution_results or {}
@@ -518,12 +555,15 @@ def _pipeline_worker(
             sp.write_text(script_text, encoding="utf-8")
             script_path = str(sp)
             reg["script_path"] = script_path
-            for part in ("train", "test"):
-                frame = (latest_split or {}).get(part)
-                if isinstance(frame, pd.DataFrame):
-                    dp = Path(tempfile.gettempdir()) / f"automl_{part}_{run_id}.csv"
-                    frame.to_csv(dp, index=False)
-                    reg[f"{part}_path"] = str(dp)
+        for part in ("train", "test"):
+            frame = (latest_split or {}).get(part)
+            if isinstance(frame, pd.DataFrame):
+                dp = Path(tempfile.gettempdir()) / f"automl_{part}_{run_id}.csv"
+                frame.to_csv(dp, index=False)
+                reg[f"{part}_path"] = str(dp)
+
+        # ── Model bundle for "Try the model" ───────────────────────────────────
+        model_note = _save_model_bundle(run_id, session, latest_rows, (latest_split or {}).get("train"), reg)
 
         # ── Stakeholder PDF ────────────────────────────────────────────────────
         pdf_path: str | None = None
@@ -541,7 +581,10 @@ def _pipeline_worker(
             "script_validation": session.script_validation or {},
             "report_available": bool(pdf_path and Path(pdf_path).is_file()),
             "best_model": str(best_model or ""),
+            "predict_available": bool(reg.get("model_path")),
+            "predict_note": model_note,
             "iterations": int(session.iteration_count or 0),
+            "phase_details": (final_details or {}).get("data") or {},
             "session": session.to_dict(),
         })
 
@@ -658,7 +701,7 @@ async def start_run(request: RunRequest):
 
 
 _MP = multiprocessing.get_context("spawn")
-_REGISTRY_KEYS = ("script_path", "pdf_path", "train_path", "test_path")
+_REGISTRY_KEYS = ("script_path", "pdf_path", "train_path", "test_path", "model_path")
 
 
 class _ChildEventQueue:
@@ -768,6 +811,74 @@ def _run_artifact(run_id: str, key: str, filename: str) -> str | None:
         if candidate.is_file():
             return str(candidate)
     return None
+
+
+_PREDICTORS: dict[str, Any] = {}   # run_id -> Predictor (small LRU)
+_PREDICTOR_LOCK = threading.Lock()
+_MAX_PREDICT_ROWS = 500
+
+
+def _predictor(run_id: str) -> Any:
+    with _PREDICTOR_LOCK:
+        if run_id in _PREDICTORS:
+            _PREDICTORS[run_id] = _PREDICTORS.pop(run_id)  # mark recently used
+            return _PREDICTORS[run_id]
+    path = _run_artifact(run_id, "model_path", f"automl_model_{run_id}.joblib")
+    if not path:
+        raise HTTPException(status_code=404, detail="No saved model for this run. Run the pipeline again to enable predictions.")
+    try:
+        pred = Predictor(joblib.load(path))
+    except PredictUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Loading model bundle %s failed", path, exc_info=True)
+        raise HTTPException(status_code=500, detail="The saved model could not be loaded.") from exc
+    with _PREDICTOR_LOCK:
+        _PREDICTORS[run_id] = pred
+        while len(_PREDICTORS) > 3:
+            _PREDICTORS.pop(next(iter(_PREDICTORS)))
+    return pred
+
+
+@app.get("/predict/{run_id}/schema")
+async def predict_schema(run_id: str):
+    """Input form description for Try the model: columns, types, defaults, example test rows."""
+    pred = await asyncio.get_running_loop().run_in_executor(None, _predictor, run_id)
+    examples = None
+    tp = _run_artifact(run_id, "test_path", f"automl_test_{run_id}.csv")
+    if tp:
+        try:
+            df_test = pd.read_csv(tp)
+            examples = df_test.sample(n=min(8, len(df_test)), random_state=7) if len(df_test) else None
+        except Exception:
+            examples = None
+    return JSONResponse(_json_safe(pred.schema(examples)))
+
+
+class PredictRequest(BaseModel):
+    rows: list[dict[str, Any]]
+    explain: bool = True
+
+
+@app.post("/predict/{run_id}")
+async def predict(run_id: str, request: PredictRequest):
+    """Predict on new raw rows with the run's trained model (same preprocessing as the script)."""
+    if not request.rows:
+        raise HTTPException(status_code=400, detail="Send at least one row.")
+    if len(request.rows) > _MAX_PREDICT_ROWS:
+        raise HTTPException(status_code=413, detail=f"At most {_MAX_PREDICT_ROWS} rows per request.")
+    pred = await asyncio.get_running_loop().run_in_executor(None, _predictor, run_id)
+
+    def _go():
+        return pred.predict(request.rows, explain=request.explain and len(request.rows) <= 50)
+    try:
+        out = await asyncio.get_running_loop().run_in_executor(None, _go)
+    except PredictUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Prediction failed for run %s", run_id, exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Prediction failed: {str(exc)[:200]}") from exc
+    return JSONResponse(_json_safe({"predictions": out}))
 
 
 @app.get("/download/script/{run_id}")
